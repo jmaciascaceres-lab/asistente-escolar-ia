@@ -150,6 +150,52 @@ def infer_case_id(role: UserRole, command: str) -> Optional[str]:
     # comandos genéricos (/start, /ayuda, etc.) o no mapeados
     return None
 
+def extract_task_description(msg: MessageIn) -> str:
+    """
+    Extrae la descripción de la tarea desde msg.text.
+    Si el usuario escribió `/tarea ...`, se toma lo que viene después.
+    """
+    text = msg.text.strip()
+    if text.startswith("/tarea"):
+        rest = text[len("/tarea"):].strip()
+        return rest or "tu tarea"
+    return text or "tu tarea"
+
+def generate_cu1_plan(msg: MessageIn) -> str:
+    """
+    Genera un plan de tarea simple, alineado con el enfoque de autorregulación
+    y modo baja estimulación cuando se indique en settings.
+    """
+    desc = extract_task_description(msg)
+    low_stim = msg.settings.get("modo") == "baja"
+
+    header = "Plan básico para organizar tu tarea\n"
+    header += f"Tarea: {desc}\n\n"
+
+    if low_stim:
+        # Versión sin emojis, frases directas y cortas
+        steps = [
+            "1) Lee la consigna una vez con calma.",
+            "2) Subraya o anota 3 palabras clave de la tarea.",
+            "3) Divide la tarea en 2 o 3 partes pequeñas.",
+            "4) Elige solo la primera parte y trabaja 15 a 20 minutos.",
+            "5) Haz una pausa corta de 5 minutos.",
+            "6) Revisa lo que hiciste y marca lo que ya completaste.",
+        ]
+    else:
+        # Versión un poco más expresiva, pero manteniendo claridad
+        steps = [
+            "1) Lee la consigna con atención y asegúrate de entender qué te piden.",
+            "2) Anota 3 palabras clave de la tarea (por ejemplo: tema, formato, fecha).",
+            "3) Divide la tarea en 2 o 3 partes pequeñas (inicio, desarrollo, cierre).",
+            "4) Empieza solo por la primera parte y trabaja 20 minutos.",
+            "5) Toma una pausa corta de 5 minutos y luego revisa lo avanzado.",
+            "6) Marca en una lista qué partes ya completaste y qué falta por hacer.",
+        ]
+
+    plan = header + "\n".join(steps) + "\n\n" + \
+        "Si quieres, puedes pedirme otro plan escribiendo de nuevo /tarea con más detalles."
+    return plan
 
 def generate_reply_stub(msg: MessageIn, case_id: Optional[str]):
     """
@@ -162,10 +208,7 @@ def generate_reply_stub(msg: MessageIn, case_id: Optional[str]):
 
     if case_id == "CU1":
         used_cag = True
-        reply_text = (
-            "He recibido tu tarea y la marcaré como caso CU1 (planificación / autorregulación).\n"
-            "Más adelante aquí te devolveré un plan paso a paso. [placeholder]"
-        )
+        reply_text = generate_cu1_plan(msg)
     elif case_id == "CU2":
         used_rag = True
         used_cag = True
