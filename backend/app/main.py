@@ -519,6 +519,68 @@ def generate_cu2_explanation(msg: MessageIn) -> str:
 
     return base_explanation + ref_lines
 
+def generate_cu3_summary(msg: MessageIn) -> str:
+    """
+    Genera un 'pre-resumen' usando snippets de documentos relevantes.
+    No es un resumen automático perfecto, sino una ayuda guiada para el docente.
+    """
+    query = extract_resumen_query(msg)
+    low_stim = msg.settings.get("modo") == "baja"
+
+    # 1) Buscar snippets relacionados. Priorizamos normativa/inclusión, luego currículo.
+    preferred_types = ["normativa_nacional", "inclusion_autismo", "paec"]
+    snippets = []
+    for t in preferred_types:
+        snippets = search_snippets(query, filters={"doc_type": t}, k=3)
+        if snippets:
+            break
+
+    if not snippets:
+        snippets = search_snippets(query, filters={}, k=3)
+
+    if not snippets:
+        return (
+            f"Busqué fragmentos relacionados con «{query}» pero no encontré nada claro.\n"
+            "Puede ser útil revisar directamente los documentos de inclusión o normativa del establecimiento."
+        )
+
+    intro = (
+        f"Aquí tienes un pre-resumen de lo que dicen los documentos sobre «{query}».\n\n"
+        "No reemplaza la lectura directa, pero puede ayudarte a preparar una reunión o clase:\n\n"
+    )
+
+    if low_stim:
+        intro = (
+            f"Resumen breve sobre «{query}» según los documentos cargados:\n\n"
+        )
+
+    lines = []
+    for i, sn in enumerate(snippets, start=1):
+        title = sn["title"]
+        source = sn.get("source") or "fuente interna"
+        doc_type = sn.get("doc_type") or ""
+        content = sn["content"].replace("\n", " ")
+        preview = content[:320] + ("..." if len(content) > 320 else "")
+        lines.append(
+            f"{i}) Documento: {title} ({source}, tipo: {doc_type}).\n"
+            f"   Idea clave: {preview}\n"
+        )
+
+    cierre = (
+        "\nSugerencia:\n"
+        "- Marca las ideas que quieres compartir con el equipo o el curso.\n"
+        "- Revisa el documento original para confirmar el contexto.\n"
+        "- Si es un tema sensible, discútelo con el equipo de convivencia o inclusión."
+    )
+
+    if low_stim:
+        cierre = (
+            "\nRevisa el documento original antes de tomar decisiones importantes. "
+            "Puedes usar estas ideas como notas rápidas para tu planificación."
+        )
+
+    return intro + "\n".join(lines) + cierre
+
 def generate_reply_stub(msg: MessageIn, case_id: Optional[str]):
     """
     Por ahora, genera textos simples según case_id para probar el flujo.
@@ -538,10 +600,7 @@ def generate_reply_stub(msg: MessageIn, case_id: Optional[str]):
     elif case_id == "CU3":
         used_rag = True
         used_cag = True
-        reply_text = (
-            "Este mensaje se registró como CU3 (resumen con fuentes para docentes/familias).\n"
-            "Luego aquí aparecerá un resumen de documentos de inclusión o normativa. [placeholder]"
-        )
+        reply_text = generate_cu3_summary(msg)
     elif case_id == "CU4":
         used_rag = True
         used_cag = True
@@ -650,52 +709,75 @@ def generate_cu7_response(msg: MessageIn) -> str:
 
 def detect_sensitive_categories(text: str) -> list[str]:
     """
-    Detector MUY simple de categorías sensibles.
-    Esto es un boceto; en producción se usaría algo más robusto.
+    Detector simple de categorías sensibles.
+    No es un sistema de clasificación clínico, solo un primer filtro.
     """
     t = text.lower()
-    categories: list[str] = []
+    cats: list[str] = []
 
-    # riesgo de auto-daño / ideación suicida
-    if any(
-        phrase in t
-        for phrase in [
-            "no quiero vivir",
-            "me quiero morir",
-            "hacerme daño",
-            "hacerme daño a mí mismo",
-            "me odio a mí mismo",
-        ]
-    ):
-        categories.append("riesgo_autolesion")
+    # ---- Riesgo de autolesión / ideación suicida ----
+    suicidio_patterns = [
+        "no quiero vivir",
+        "no quiero seguir viviendo",
+        "me quiero morir",
+        "me quiero matar",
+        "quiero matarme",
+        "quiero hacerme daño",
+        "quiero dañarme",
+        "quiero cortarme",
+        "no aguanto más vivir",
+    ]
+    if any(p in t for p in suicidio_patterns):
+        cats.append("riesgo_autolesion")
 
-    # violencia familiar
-    if any(
-        phrase in t
-        for phrase in [
-            "me pegan en la casa",
-            "me golpean en la casa",
-            "me pegan mis padres",
-            "me pegan mis papás",
-            "mi papá me golpea",
-            "mi mamá me golpea",
-        ]
-    ):
-        categories.append("violencia_familiar")
+    # ---- Autodesprecio intenso (vigilar como factor de riesgo) ----
+    auto_odio_patterns = [
+        "me odio a mí mismo",
+        "me odio a mi mismo",
+        "me odio",
+        "soy una basura",
+        "no valgo nada",
+    ]
+    if any(p in t for p in auto_odio_patterns) and "riesgo_autolesion" not in cats:
+        cats.append("malestar_emocional_intenso")
 
-    # acoso escolar (muy general)
-    if any(
-        phrase in t
-        for phrase in [
-            "me hacen bullying",
-            "me molestan siempre",
-            "me pegan en el colegio",
-            "me amenazan en el curso",
-        ]
-    ):
-        categories.append("acoso_escolar")
+    # ---- Violencia familiar / maltrato en casa ----
+    violencia_familiar_patterns = [
+        "me pegan en la casa",
+        "me golpean en la casa",
+        "me pegan mis papás",
+        "me pegan mis padres",
+        "mi papá me golpea",
+        "mi mamá me golpea",
+        "en mi casa me pegan",
+    ]
+    if any(p in t for p in violencia_familiar_patterns):
+        cats.append("violencia_familiar")
 
-    return categories
+    # ---- Posible abuso sexual (descriptores muy generales) ----
+    abuso_patterns = [
+        "me tocan sin permiso",
+        "me tocan partes íntimas",
+        "me obligan a tocar",
+        "me obligan a hacer cosas sexuales",
+        "me obligan a enviar fotos",
+    ]
+    if any(p in t for p in abuso_patterns):
+        cats.append("posible_abuso_sexual")
+
+    # ---- Acoso escolar / bullying ----
+    bullying_patterns = [
+        "me hacen bullying",
+        "me molestan siempre",
+        "me molestan todos los días",
+        "me pegan en el colegio",
+        "me amenazan en el curso",
+        "me insultan en el curso",
+    ]
+    if any(p in t for p in bullying_patterns):
+        cats.append("acoso_escolar")
+
+    return cats
 
 def create_teacher_alert(
     conn,
@@ -796,5 +878,13 @@ def extract_fuente_query(msg: MessageIn) -> str:
         rest = text[len("/fuente"):].strip()
         return rest or "tu consulta"
     return text or "tu consulta"
+
+def extract_resumen_query(msg: MessageIn) -> str:
+    text = msg.text.strip()
+    if text.startswith("/resumen"):
+        rest = text[len("/resumen"):].strip()
+        return rest or "tu tema"
+    return text or "tu tema"
+
 
 

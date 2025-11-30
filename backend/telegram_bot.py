@@ -142,6 +142,58 @@ def main():
                     send_message(chat_id, "\n".join(lines))
                     continue
 
+                # --- comando /detalle_alerta ID solo para coordinadores ---
+                if text.startswith("/detalle_alerta"):
+                    role = user_roles.get(from_id, "student")
+                    if role != "coordinator":
+                        send_message(
+                            chat_id,
+                            "El comando /detalle_alerta está pensado para coordinadores o equipos de convivencia."
+                        )
+                        continue
+
+                    parts = text.split(maxsplit=1)
+                    if len(parts) < 2:
+                        send_message(chat_id, "Uso: /detalle_alerta ID (por ejemplo, /detalle_alerta 3).")
+                        continue
+
+                    try:
+                        alert_id = int(parts[1].strip())
+                    except ValueError:
+                        send_message(chat_id, "El ID de la alerta debe ser un número.")
+                        continue
+
+                    try:
+                        resp = requests.get(
+                            f"{BACKEND_URL.rsplit('/api', 1)[0]}/api/v1/alerts/{alert_id}",
+                            timeout=20,
+                        )
+                        if resp.status_code == 404:
+                            send_message(chat_id, f"No encontré la alerta con ID {alert_id}.")
+                            continue
+                        if resp.status_code != 200:
+                            send_message(chat_id, "No pude obtener el detalle de la alerta.")
+                            continue
+                        data = resp.json()
+                    except Exception as e:
+                        print("Error obteniendo detalle de alerta:", e)
+                        send_message(chat_id, "No pude obtener el detalle de la alerta.")
+                        continue
+
+                    msg_lines = [
+                        f"Detalle alerta ID {data['alert_id']}:",
+                        f"- Tipo: {data['alert_type']}",
+                        f"- Estado: {data['status']}",
+                        f"- Estudiante_id: {data['student_id']}",
+                        f"- Curso_id: {data['course_id']}",
+                        f"- Creada: {data['created_at']}",
+                        "",
+                        "Resumen del mensaje:",
+                        data["summary"],
+                    ]
+                    send_message(chat_id, "\n".join(msg_lines))
+                    continue
+
                 # comando = primera palabra (ej: /tarea), resto es argumento
                 parts = text.split(" ", 1)
                 command = parts[0]

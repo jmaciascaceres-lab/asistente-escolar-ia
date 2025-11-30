@@ -1,6 +1,7 @@
 -- Extensiones útiles (opcional, pero recomendables)
 CREATE EXTENSION IF NOT EXISTS "uuid-ossp";
 CREATE EXTENSION IF NOT EXISTS "pgcrypto";
+CREATE EXTENSION IF NOT EXISTS "vector";
 
 -- Tipo enum para roles de usuario
 DO $$
@@ -60,6 +61,20 @@ CREATE TABLE IF NOT EXISTS documents (
   created_at  TIMESTAMPTZ DEFAULT now(),
   updated_at  TIMESTAMPTZ DEFAULT now()
 );
+
+-- Tabla de chunks para vectores (RAG)
+CREATE TABLE IF NOT EXISTS document_chunks (
+  id          BIGSERIAL PRIMARY KEY,
+  document_id BIGINT REFERENCES documents(id) ON DELETE CASCADE,
+  chunk_index INT NOT NULL,
+  content     TEXT NOT NULL,
+  embedding   vector(384),
+  metadata    JSONB DEFAULT '{}'::jsonb,
+  created_at  TIMESTAMPTZ DEFAULT now()
+);
+
+CREATE INDEX IF NOT EXISTS idx_document_chunks_document_id
+  ON document_chunks (document_id);
 
 -- Tabla de interacciones para telemetría
 CREATE TABLE IF NOT EXISTS interaction_logs (
