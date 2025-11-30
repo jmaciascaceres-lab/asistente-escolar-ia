@@ -2,7 +2,7 @@ from enum import Enum
 import time
 import json
 from typing import Optional, List
-from .rag_service import ingest_document, search_documents
+from .rag_service import search_documents, search_snippets
 
 from fastapi import FastAPI
 from pydantic import BaseModel
@@ -276,46 +276,102 @@ def extract_explanation_topic(msg: MessageIn) -> str:
         return rest or "este contenido"
     return text or "este contenido"
 
+def _cu2_template_ciclo_agua(low_stim: bool) -> str:
+    if low_stim:
+        return (
+            "Vamos a entender el «ciclo del agua» en pasos simples:\n\n"
+            "1) El agua de ríos, mares o lagos se calienta con el sol y se convierte en vapor (evaporación).\n"
+            "2) Ese vapor sube, se enfría y forma nubes (condensación).\n"
+            "3) De las nubes cae agua en forma de lluvia, nieve o granizo (precipitación).\n"
+            "4) Parte del agua vuelve a ríos y mares, y otra se filtra en el suelo (escorrentía e infiltración).\n\n"
+            "Piensa en un ejemplo: un charco que desaparece después de un día soleado."
+        )
+    else:
+        return (
+            "El «ciclo del agua» describe cómo el agua se mueve de un lugar a otro cambiando de estado:\n\n"
+            "- Evaporación: el agua líquida se calienta (por ejemplo, en mares o charcos) y pasa a vapor.\n"
+            "- Condensación: el vapor se enfría en la atmósfera y forma nubes.\n"
+            "- Precipitación: desde las nubes el agua cae como lluvia, nieve o granizo.\n"
+            "- Escorrentía e infiltración: el agua que cae vuelve a ríos, mares o se filtra al suelo.\n\n"
+            "Una buena forma de estudiarlo es dibujar un esquema con flechas que muestren esos pasos."
+        )
+
+def _cu2_template_fotosintesis(low_stim: bool) -> str:
+    if low_stim:
+        return (
+            "La «fotosíntesis» es la forma en que las plantas producen su alimento:\n\n"
+            "1) Las hojas reciben luz del sol.\n"
+            "2) Las raíces toman agua del suelo.\n"
+            "3) La planta toma dióxido de carbono del aire.\n"
+            "4) Con la luz, el agua y el dióxido de carbono, la planta produce azúcar para alimentarse y libera oxígeno.\n\n"
+            "Imagina una planta cerca de una ventana: usa la luz para vivir y crecer."
+        )
+    else:
+        return (
+            "La «fotosíntesis» es el proceso mediante el cual las plantas producen su propio alimento.\n\n"
+            "En resumen:\n"
+            "- Las hojas captan luz solar.\n"
+            "- Las raíces absorben agua del suelo.\n"
+            "- La planta toma dióxido de carbono (CO₂) del aire.\n"
+            "- Dentro de las hojas, gracias a la clorofila, se transforma esa mezcla en azúcares (alimento) y se libera oxígeno (O₂).\n\n"
+            "Puedes pensarla como una “fábrica” donde la luz es la energía que permite transformar agua y CO₂ en comida para la planta."
+        )
+
 def generate_cu2_explanation(msg: MessageIn) -> str:
     """
     Explicación v0 para CU2:
-    - Usa una 'semiregla' para guiar al estudiante a entender el tema.
-    - Consulta el RAG v0 para poder citar al menos un documento relacionado.
+    - Si detecta temas específicos (ciclo del agua, fotosíntesis), usa plantillas.
+    - Además consulta el RAG (documentos y/o snippets) para poder citar fuentes.
+    - Si no reconoce el tema, usa un andamiaje genérico.
     """
     topic = extract_explanation_topic(msg)
+    topic_lc = topic.lower()
     low_stim = msg.settings.get("modo") == "baja"
 
-    # Buscar documentos relacionados (idealmente curriculares o de la asignatura)
+    # 1) Plantillas específicas por tema
+    base_explanation = ""
+    if "ciclo del agua" in topic_lc:
+        base_explanation = _cu2_template_ciclo_agua(low_stim)
+    elif "fotosintesis" in topic_lc or "fotosíntesis" in topic_lc:
+        base_explanation = _cu2_template_fotosintesis(low_stim)
+    else:
+        # Andamiaje genérico (como antes)
+        if low_stim:
+            base_explanation = (
+                f"Vamos a entender «{topic}» en pasos simples:\n\n"
+                "1) Qué es: escribe en una frase corta qué entiendes por este tema.\n"
+                "2) Para qué sirve: piensa en una situación concreta donde aparezca.\n"
+                "3) Ejemplo: anota un ejemplo muy sencillo (puede ser de tu vida diaria).\n"
+                "4) Duda principal: escribe una pregunta específica que todavía tengas.\n\n"
+                "Si quieres, puedes mandarme tu frase y tu ejemplo y seguimos desde ahí."
+            )
+        else:
+            base_explanation = (
+                f"Intentemos comprender «{topic}» ordenando la idea en 3 partes:\n\n"
+                "1) Definición: escribe con tus palabras qué es, evitando copiar literalmente.\n"
+                "2) Propósito: piensa para qué sirve o por qué es importante en la asignatura.\n"
+                "3) Ejemplo aplicado: inventa un ejemplo sencillo que conecte con algo de tu vida diaria.\n\n"
+                "Luego puedes enviarme tu definición o ejemplo y te puedo ayudar a mejorarlos."
+            )
+
+    # 2) Consultar RAG para citar alguna fuente relevante (currículo y/o inclusión)
     docs = search_documents(topic, filters={"doc_type": "curriculo"})
     if not docs:
-        # Si no hay curriculo, busca en cualquier tipo
         docs = search_documents(topic, filters={})
 
-    ref_line = ""
+    ref_lines = ""
     if docs:
         d = docs[0]
         fuente = d.get("source") or "fuente interna"
-        ref_line = f"\n\nReferencia asociada en los documentos del colegio: «{d['title']}» ({fuente})."
-
-    if low_stim:
-        body = (
-            f"Vamos a entender «{topic}» en pasos simples:\n\n"
-            "1) Qué es: escribe en una frase corta qué entiendes por este tema.\n"
-            "2) Para qué sirve: piensa en una situación concreta donde aparezca.\n"
-            "3) Ejemplo: anota un ejemplo muy sencillo (puede ser de tu vida diaria).\n"
-            "4) Duda principal: escribe una pregunta específica que todavía tengas.\n\n"
-            "Si quieres, puedes mandarme tu frase y tu ejemplo y seguimos desde ahí."
-        )
-    else:
-        body = (
-            f"Intentemos comprender «{topic}» ordenando la idea en 3 partes:\n\n"
-            "1) Definición: escribe con tus palabras qué es, evitando copiar literalmente.\n"
-            "2) Propósito: piensa para qué sirve o por qué es importante en la asignatura.\n"
-            "3) Ejemplo aplicado: inventa un ejemplo sencillo que conecte con algo de tu vida diaria.\n\n"
-            "Luego puedes enviarme tu definición o ejemplo y te puedo ayudar a mejorarlos."
+        ref_lines += (
+            f"\n\nReferencia asociada en los documentos del colegio: «{d['title']}» ({fuente})."
         )
 
-    return body + ref_line
+    # Opcional: buscar también un snippet normativo si el tema lo amerita
+    # (por ejemplo, si es una duda de convivencia o inclusión, más que de contenido)
+    # Por ahora, lo dejamos como posibilidad a futuro.
+
+    return base_explanation + ref_lines
 
 def generate_reply_stub(msg: MessageIn, case_id: Optional[str]):
     """
@@ -360,9 +416,7 @@ def generate_reply_stub(msg: MessageIn, case_id: Optional[str]):
     elif case_id == "CU7":
         used_rag = True
         used_cag = True
-        reply_text = (
-            "Estás usando CU7 (consulta de normativa / convivencia / inclusión). [placeholder]"
-        )
+        reply_text = generate_cu7_response(msg)
     elif case_id == "CU8":
         # Teacher-in-the-loop; en el futuro activará alertas
         sensitive_flag = False  # aquí luego se pondrá True cuando se detecte algo sensible
@@ -377,6 +431,68 @@ def generate_reply_stub(msg: MessageIn, case_id: Optional[str]):
 
     return reply_text, used_rag, used_cag, sensitive_flag
 
+def generate_cu7_response(msg: MessageIn) -> str:
+    """
+    Usa RAG para ofrecer fragmentos de documentos relevantes (normativa, inclusión, PAEC, etc.)
+    para apoyar decisiones docentes o de convivencia.
+    """
+    query = extract_fuente_query(msg)
+    low_stim = msg.settings.get("modo") == "baja"
+
+    # Filtramos preferentemente por normativa / inclusión (ajusta doc_type según como cargues tus docs)
+    preferred_types = ["normativa_nacional", "inclusion_autismo", "paec", "reglamento_interno"]
+
+    snippets = []
+    for t in preferred_types:
+        snippets = search_snippets(query, filters={"doc_type": t}, k=3)
+        if snippets:
+            break
+
+    # Si no encontró nada en tipos preferidos, busca en todo
+    if not snippets:
+        snippets = search_snippets(query, filters={}, k=3)
+
+    if not snippets:
+        return (
+            "Busqué en los documentos cargados, pero no encontré fragmentos claramente relacionados "
+            "con tu consulta. Puede ser útil revisar directamente las orientaciones del establecimiento "
+            "o del MINEDUC, y comentar el caso en el equipo de convivencia."
+        )
+
+    intro = (
+        f"He buscado orientaciones relacionadas con: «{query}».\n\n"
+        "Estos fragmentos pueden ayudarte a revisar la normativa y las orientaciones, "
+        "pero siempre deben interpretarse junto al equipo del establecimiento:\n\n"
+    )
+
+    lines = []
+    for i, sn in enumerate(snippets, start=1):
+        title = sn["title"]
+        source = sn.get("source") or "fuente interna"
+        doc_type = sn.get("doc_type") or ""
+        # Pequeño preview del contenido
+        content = sn["content"].replace("\n", " ")
+        preview = content[:280] + ("..." if len(content) > 280 else "")
+        lines.append(
+            f"{i}) Documento: {title} ({source}, tipo: {doc_type}).\n"
+            f"   Extracto: {preview}\n"
+        )
+
+    cierre = (
+        "\nTe sugiero revisar estos documentos completos y, si se trata de una situación compleja, "
+        "analizarla junto al equipo de convivencia o inclusión, respetando siempre la dignidad y los "
+        "derechos del estudiante."
+    )
+
+    if low_stim:
+        # Quitamos adjetivos innecesarios y dejamos un formato más directo
+        intro = intro.replace("claramente", "").replace("compleja", "")
+        cierre = (
+            "\nRevisa los documentos completos y conversa el caso con el equipo del establecimiento. "
+            "La decisión final siempre es de los adultos responsables."
+        )
+
+    return intro + "\n".join(lines) + cierre
 
 # ---------- Helpers de BD ----------
 
@@ -454,3 +570,10 @@ def log_interaction(
                 reply_text,
             ),
         )
+
+def extract_fuente_query(msg: MessageIn) -> str:
+    text = msg.text.strip()
+    if text.startswith("/fuente"):
+        rest = text[len("/fuente"):].strip()
+        return rest or "tu consulta"
+    return text or "tu consulta"
