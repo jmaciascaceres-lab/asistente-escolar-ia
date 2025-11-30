@@ -377,17 +377,74 @@ def extract_task_description(msg: MessageIn) -> str:
 
 def generate_cu1_plan(msg: MessageIn) -> str:
     """
-    Genera un plan de tarea simple, alineado con el enfoque de autorregulación
-    y modo baja estimulación cuando se indique en settings.
+    CU1: planificación de tareas.
+    Modos:
+      - 'single': tarea puntual (por defecto)
+      - 'exam': estudiar para prueba/control/examen
+      - 'weekly': plan de estudio semanal
     """
     desc = extract_task_description(msg)
     low_stim = msg.settings.get("modo") == "baja"
 
+    text_lc = msg.text.lower()
+    if "semana" in text_lc or "semanal" in text_lc or "toda la semana" in text_lc:
+        plan_type = "weekly"
+    elif any(word in text_lc for word in ["prueba", "control", "examen"]):
+        plan_type = "exam"
+    else:
+        plan_type = "single"
+
+    if plan_type == "weekly":
+        header = "Plan semanal para organizar tus estudios\n"
+        header += f"Tema principal: {desc}\n\n"
+
+        if low_stim:
+            steps = [
+                "Lunes: 20 minutos para leer o ver el contenido principal. Escribe 3 palabras clave.",
+                "Martes: 20 minutos para hacer un esquema o dibujo simple con las ideas más importantes.",
+                "Miércoles: 20 minutos para responder 3 preguntas sobre el tema (puedes pedírmelas con /quiz).",
+                "Jueves: 20 minutos para revisar errores o dudas y preguntar a alguien si es posible.",
+                "Viernes: repaso corto de 10 a 15 minutos: mira tu esquema y di en voz alta lo que recuerdas.",
+            ]
+        else:
+            steps = [
+                "Lunes: revisa el contenido general (apuntes, libro, guía). Anota 3 ideas centrales.",
+                "Martes: construye un mapa conceptual o lista ordenada de subtemas.",
+                "Miércoles: responde 3–5 preguntas sobre el tema (puedes generarlas con /quiz).",
+                "Jueves: busca ejemplos o ejercicios y resuélvelos. Marca lo que no entiendes aún.",
+                "Viernes: haz un repaso global de 15–20 minutos y verifica si puedes explicar el tema en voz alta.",
+            ]
+
+        plan = header + "\n".join(steps)
+        plan += "\n\nSi quieres, puedes ajustar los días según tu realidad (por ejemplo, concentrar más tiempo el fin de semana)."
+        return plan
+
+    if plan_type == "exam":
+        header = "Plan para preparar una prueba o control\n"
+        header += f"Prueba sobre: {desc}\n\n"
+
+        if low_stim:
+            steps = [
+                "Fase 1 (primer día): leer el contenido y subrayar 3 a 5 ideas importantes.",
+                "Fase 2 (día siguiente): escribir un resumen muy corto (5 a 7 líneas) con esas ideas.",
+                "Fase 3 (día antes de la prueba): responder 3 preguntas clave y revisar tu resumen.",
+            ]
+        else:
+            steps = [
+                "Fase 1 (2–3 días antes): repasa el contenido y organiza un esquema general.",
+                "Fase 2 (1–2 días antes): responde preguntas tipo guía (puedes usar /quiz para generarlas).",
+                "Fase 3 (día previo): repaso breve, dormir bien y evitar estudiar hasta muy tarde.",
+            ]
+
+        plan = header + "\n".join(steps)
+        plan += "\n\nSi sabes la fecha exacta de la prueba, puedes distribuir estas fases en esos días."
+        return plan
+
+    # plan_type == "single" (tarea puntual)
     header = "Plan básico para organizar tu tarea\n"
     header += f"Tarea: {desc}\n\n"
 
     if low_stim:
-        # Versión sin emojis, frases directas y cortas
         steps = [
             "1) Lee la consigna una vez con calma.",
             "2) Subraya o anota 3 palabras clave de la tarea.",
@@ -397,19 +454,19 @@ def generate_cu1_plan(msg: MessageIn) -> str:
             "6) Revisa lo que hiciste y marca lo que ya completaste.",
         ]
     else:
-        # Versión un poco más expresiva, pero manteniendo claridad
         steps = [
             "1) Lee la consigna con atención y asegúrate de entender qué te piden.",
-            "2) Anota 3 palabras clave de la tarea (por ejemplo: tema, formato, fecha).",
+            "2) Anota 3 palabras clave de la tarea (tema, formato, fecha).",
             "3) Divide la tarea en 2 o 3 partes pequeñas (inicio, desarrollo, cierre).",
             "4) Empieza solo por la primera parte y trabaja 20 minutos.",
             "5) Toma una pausa corta de 5 minutos y luego revisa lo avanzado.",
             "6) Marca en una lista qué partes ya completaste y qué falta por hacer.",
         ]
 
-    plan = header + "\n".join(steps) + "\n\n" + \
-        "Si quieres, puedes pedirme otro plan escribiendo de nuevo /tarea con más detalles."
+    plan = header + "\n".join(steps)
+    plan += "\n\nSi quieres, puedes pedirme otro plan escribiendo de nuevo /tarea con más detalles."
     return plan
+
 
 def extract_explanation_topic(msg: MessageIn) -> str:
     """
@@ -465,26 +522,37 @@ def _cu2_template_fotosintesis(low_stim: bool) -> str:
 
 def generate_cu2_explanation(msg: MessageIn) -> str:
     """
-    Explicación v0 para CU2:
-    - Si detecta temas específicos (ciclo del agua, fotosíntesis), usa plantillas.
-    - Además consulta el RAG (documentos y/o snippets) para poder citar fuentes.
-    - Si no reconoce el tema, usa un andamiaje genérico.
+    CU2: explicación adaptada de contenido.
+    - Plantillas específicas para algunos temas (ciclo del agua, fotosíntesis).
+    - Modos extra:
+        * repaso rápido (palabras: repaso, breve, rápido)
+        * foco en ejercicios/preguntas (palabras: ejercicios, preguntas)
+    - Siempre intenta citar al menos un documento relacionado vía RAG.
     """
     topic = extract_explanation_topic(msg)
     topic_lc = topic.lower()
     low_stim = msg.settings.get("modo") == "baja"
 
-    # 1) Plantillas específicas por tema
-    base_explanation = ""
+    review_mode = any(w in topic_lc for w in ["repaso", "breve", "rápido", "rapido"])
+    exercise_mode = any(w in topic_lc for w in ["ejercicios", "preguntas"])
+
+    # Intento de "limpiar" el tema sacando estas palabras
+    clean_topic = topic
+    for w in ["repaso", "breve", "rápido", "rapido", "ejercicios", "preguntas"]:
+        clean_topic = clean_topic.replace(w, "").strip()
+    if not clean_topic:
+        clean_topic = topic
+
+    # 1) Plantillas específicas
     if "ciclo del agua" in topic_lc:
         base_explanation = _cu2_template_ciclo_agua(low_stim)
     elif "fotosintesis" in topic_lc or "fotosíntesis" in topic_lc:
         base_explanation = _cu2_template_fotosintesis(low_stim)
     else:
-        # Andamiaje genérico (como antes)
+        # Andamiaje genérico
         if low_stim:
             base_explanation = (
-                f"Vamos a entender «{topic}» en pasos simples:\n\n"
+                f"Vamos a entender «{clean_topic}» en pasos simples:\n\n"
                 "1) Qué es: escribe en una frase corta qué entiendes por este tema.\n"
                 "2) Para qué sirve: piensa en una situación concreta donde aparezca.\n"
                 "3) Ejemplo: anota un ejemplo muy sencillo (puede ser de tu vida diaria).\n"
@@ -493,17 +561,36 @@ def generate_cu2_explanation(msg: MessageIn) -> str:
             )
         else:
             base_explanation = (
-                f"Intentemos comprender «{topic}» ordenando la idea en 3 partes:\n\n"
+                f"Intentemos comprender «{clean_topic}» ordenando la idea en 3 partes:\n\n"
                 "1) Definición: escribe con tus palabras qué es, evitando copiar literalmente.\n"
                 "2) Propósito: piensa para qué sirve o por qué es importante en la asignatura.\n"
                 "3) Ejemplo aplicado: inventa un ejemplo sencillo que conecte con algo de tu vida diaria.\n\n"
                 "Luego puedes enviarme tu definición o ejemplo y te puedo ayudar a mejorarlos."
             )
 
-    # 2) Consultar RAG para citar alguna fuente relevante (currículo y/o inclusión)
-    docs = search_documents(topic, filters={"doc_type": "curriculo"})
+    # 2) Bloque extra según modo
+    extra = ""
+
+    if review_mode:
+        extra += (
+            "\n\nPlan de repaso rápido:\n"
+            "• Lee tu resumen o esquema sobre el tema.\n"
+            "• Cubre el texto y trata de explicarlo en voz alta.\n"
+            "• Revisa lo que olvidaste y márcalo para repasarlo otra vez.\n"
+        )
+
+    if exercise_mode:
+        extra += (
+            f"\n\nPreguntas para que te autoevalúes sobre «{clean_topic}»:\n"
+            f"1) ¿Qué es lo primero que se te viene a la cabeza cuando piensas en «{clean_topic}»?\n"
+            f"2) Explica un ejemplo donde aparezca «{clean_topic}» en tu vida diaria.\n"
+            f"3) ¿Qué parte del tema te cuesta más entender y por qué?\n"
+        )
+
+    # 3) Referencias vía RAG (documentos relacionados)
+    docs = search_documents(clean_topic, filters={"doc_type": "curriculo"})
     if not docs:
-        docs = search_documents(topic, filters={})
+        docs = search_documents(clean_topic, filters={})
 
     ref_lines = ""
     if docs:
@@ -513,11 +600,8 @@ def generate_cu2_explanation(msg: MessageIn) -> str:
             f"\n\nReferencia asociada en los documentos del colegio: «{d['title']}» ({fuente})."
         )
 
-    # Opcional: buscar también un snippet normativo si el tema lo amerita
-    # (por ejemplo, si es una duda de convivencia o inclusión, más que de contenido)
-    # Por ahora, lo dejamos como posibilidad a futuro.
+    return base_explanation + extra + ref_lines
 
-    return base_explanation + ref_lines
 
 def generate_cu3_summary(msg: MessageIn) -> str:
     """
@@ -581,6 +665,59 @@ def generate_cu3_summary(msg: MessageIn) -> str:
 
     return intro + "\n".join(lines) + cierre
 
+def generate_cu4_quiz(msg: MessageIn) -> str:
+    """
+    Genera un set de preguntas de evaluación formativa (CU4) a partir de un tema.
+    Usa RAG para conectar algunas preguntas con documentos curriculares o de inclusión.
+    """
+    topic = extract_quiz_query(msg)
+    low_stim = msg.settings.get("modo") == "baja"
+
+    # 1) Recuperar snippets relacionados (primero currículo, luego lo demás)
+    snippets = search_snippets(topic, filters={"doc_type": "curriculo"}, k=3)
+    if not snippets:
+        snippets = search_snippets(topic, filters={}, k=3)
+
+    # 2) Preguntas base (recuerdo + comprensión + aplicación)
+    base_questions = [
+        f"1) Explica con tus palabras qué entiendes por «{topic}».",
+        f"2) Menciona un ejemplo concreto donde se vea aplicado «{topic}».",
+        f"3) ¿Por qué crees que «{topic}» es importante en la vida diaria o en tu comunidad?",
+    ]
+
+    # 3) Preguntas conectadas a documentos del colegio
+    extra_lines = ""
+    if snippets:
+        q_lines = []
+        for sn in snippets:
+            title = sn["title"]
+            source = sn.get("source") or "fuente interna"
+            doc_type = sn.get("doc_type") or ""
+            q_lines.append(
+                f"- Según el documento «{title}» ({source}, tipo: {doc_type}), "
+                f"¿qué idea importante rescatarías sobre «{topic}»?"
+            )
+        extra_lines = "\n\nPreguntas conectadas a documentos del colegio:\n" + "\n".join(q_lines)
+
+    # 4) Tono según modo
+    if low_stim:
+        intro = f"Preguntas simples sobre «{topic}» para usar en clase:\n\n"
+        cierre = (
+            "\n\nÚsalas solo como guía y ajusta el nivel de dificultad según tu curso."
+        )
+    else:
+        intro = (
+            f"Propuesta de preguntas de evaluación formativa sobre «{topic}».\n"
+            "Puedes ajustar el lenguaje y la dificultad según tu curso:\n\n"
+        )
+        cierre = (
+            "\n\nSugerencia: puedes usar estas preguntas como salida rápida de la clase, "
+            "en trabajo en parejas o como base para una rúbrica sencilla."
+        )
+
+    return intro + "\n".join(base_questions) + extra_lines + cierre
+
+
 def generate_reply_stub(msg: MessageIn, case_id: Optional[str]):
     """
     Por ahora, genera textos simples según case_id para probar el flujo.
@@ -604,9 +741,7 @@ def generate_reply_stub(msg: MessageIn, case_id: Optional[str]):
     elif case_id == "CU4":
         used_rag = True
         used_cag = True
-        reply_text = (
-            "Lo tomaré como CU4 (preguntas de evaluación formativa). [placeholder]"
-        )
+        reply_text = generate_cu4_quiz(msg)
     elif case_id == "CU5":
         used_rag = True
         used_cag = True
@@ -885,6 +1020,14 @@ def extract_resumen_query(msg: MessageIn) -> str:
         rest = text[len("/resumen"):].strip()
         return rest or "tu tema"
     return text or "tu tema"
+
+def extract_quiz_query(msg: MessageIn) -> str:
+    text = msg.text.strip()
+    if text.startswith("/quiz"):
+        rest = text[len("/quiz"):].strip()
+        return rest or "este contenido"
+    return text or "este contenido"
+
 
 
 
