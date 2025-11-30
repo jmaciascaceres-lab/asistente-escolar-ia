@@ -104,6 +104,44 @@ def main():
                     )
                     continue
 
+                # --- comando /alertas solo para coordinadores ---
+                if text.startswith("/alertas"):
+                    role = user_roles.get(from_id, "student")
+                    if role != "coordinator":
+                        send_message(
+                            chat_id,
+                            "El comando /alertas está pensado para coordinadores o equipos de convivencia."
+                        )
+                        continue
+
+                    try:
+                        resp = requests.get(
+                            f"{BACKEND_URL.rsplit('/api', 1)[0]}/api/v1/alerts",
+                            params={"status": "pending"},
+                            timeout=20,
+                        )
+                        if resp.status_code != 200:
+                            send_message(chat_id, "No pude obtener las alertas en este momento.")
+                            continue
+                        data = resp.json()
+                    except Exception as e:
+                        print("Error obteniendo alertas:", e)
+                        send_message(chat_id, "No pude obtener las alertas en este momento.")
+                        continue
+
+                    alerts = data or []
+                    if not alerts:
+                        send_message(chat_id, "No hay alertas pendientes por ahora.")
+                        continue
+
+                    lines = ["Alertas pendientes:"]
+                    for a in alerts[:10]:
+                        lines.append(
+                            f"- ID {a['alert_id']} | tipo: {a['alert_type']} | estudiante_id: {a['student_id']} | estado: {a['status']}"
+                        )
+                    send_message(chat_id, "\n".join(lines))
+                    continue
+
                 # comando = primera palabra (ej: /tarea), resto es argumento
                 parts = text.split(" ", 1)
                 command = parts[0]

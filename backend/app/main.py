@@ -1,7 +1,7 @@
 from enum import Enum
 import time
 import json
-from typing import Optional, List
+from typing import Optional, List, Tuple    
 from .rag_service import search_documents, search_snippets
 
 from fastapi import FastAPI
@@ -86,6 +86,31 @@ class HealthResponse(BaseModel):
     status: str
 
 
+class SetRoleRequest(BaseModel):
+    telegram_id: int
+    role: UserRole
+
+
+class AlertSummary(BaseModel):
+    alert_id: int
+    created_at: str
+    student_id: Optional[int]
+    course_id: Optional[int]
+    alert_type: str
+    status: str
+
+
+class AlertDetail(BaseModel):
+    alert_id: int
+    created_at: str
+    student_id: Optional[int]
+    course_id: Optional[int]
+    alert_type: str
+    status: str
+    summary: str
+    last_update: str
+
+
 # ---------- Endpoints básicos ----------
 
 @app.get("/health", response_model=HealthResponse)
@@ -154,6 +179,11 @@ async def handle_message(msg: MessageIn):
     # Persistir en BD
     with get_db() as conn:
         user_id = upsert_user(conn, msg)
+        sensitive_flag_override, reply_override = handle_safety_and_alerts(conn, user_id, msg)
+        if reply_override:
+            reply_text = reply_override
+        if sensitive_flag_override:
+            sensitive_flag = True
         log_interaction(
             conn=conn,
             user_id=user_id,
@@ -197,7 +227,101 @@ async def set_user_role(req: SetRoleRequest):
             )
     return {"status": "ok"}
 
+@app.get("/api/v1/alerts", response_model=List[AlertSummary])
+async def list_alerts(status: Optional[str] = "pending"):
+    with get_db() as conn:
+        with conn.cursor() as cur:
+            if status:
+                cur.execute(
+                    """
+                    SELECT id, created_at, student_id, course_id, alert_type, status
+                    FROM teacher_alerts
+                    WHERE status = %s
+                    ORDER BY created_at DESC
+                    LIMIT 20;
+                    """,
+                    (status,),
+                )
+            else:
+                cur.execute(
+                    """
+                    SELECT id, created_at, student_id, course_id, alert_type, status
+                    FROM teacher_alerts
+                    ORDER BY created_at DESC
+                    LIMIT 20;
+                    """
+                )
+            rows = cur.fetchall()
+
+    return [
+        AlertSummary(
+            alert_id=r[0],
+            created_at=r[1].isoformat(),
+            student_id=r[2],
+            course_id=r[3],
+            alert_type=r[4],
+            status=r[5],
+        )
+        for r in rows
+    ]
+
+
+@app.get("/api/v1/alerts/{alert_id}", response_model=AlertDetail)
+async def get_alert(alert_id: int):
+    with get_db() as conn:
+        with conn.cursor() as cur:
+            cur.execute(
+                """
+                SELECT id, created_at, student_id, course_id, alert_type, status, summary, last_update
+                FROM teacher_alerts
+                WHERE id = %s;
+                """,
+                (alert_id,),
+            )
+            row = cur.fetchone()
+            if not row:
+                raise HTTPException(status_code=404, detail="Alerta no encontrada")
+
+    return AlertDetail(
+        alert_id=row[0],
+        created_at=row[1].isoformat(),
+        student_id=row[2],
+        course_id=row[3],
+        alert_type=row[4],
+        status=row[5],
+        summary=row[6],
+        last_update=row[7].isoformat() if row[7] else "",
+    )
+
 # ---------- Helpers de lógica / orquestador mínimo ----------
+
+def handle_safety_and_alerts(conn, user_id: int, msg: MessageIn) -> Tuple[bool, Optional[str]]:
+    """
+    Crea alertas si detecta texto sensible en mensajes de estudiantes.
+    Devuelve (sensitive_flag, reply_override).
+    """
+    if msg.role != UserRole.student:
+        return False, None
+
+    cats = detect_sensitive_categories(msg.text)
+    if not cats:
+        return False, None
+
+    alert_type = cats[0]
+    summary = msg.text[:400]
+
+    create_teacher_alert(conn, user_id, msg.course_id, alert_type, summary)
+
+    # Mensaje muy general de contención, sin entrar en detalles clínicos
+    reply = (
+        "Gracias por contarme esto. Lo que estás viviendo es importante y no tienes que "
+        "enfrentarlo solo.\n\n"
+        "Voy a pedir a un adulto responsable de tu colegio que revise este mensaje para que "
+        "pueda acompañarte de mejor forma. Si en este momento te sientes en peligro o muy mal, "
+        "habla con una persona adulta de confianza lo antes posible."
+    )
+
+    return True, reply
 
 def infer_case_id(role: UserRole, command: str) -> Optional[str]:
     """
@@ -524,6 +648,71 @@ def generate_cu7_response(msg: MessageIn) -> str:
 
     return intro + "\n".join(lines) + cierre
 
+def detect_sensitive_categories(text: str) -> list[str]:
+    """
+    Detector MUY simple de categorías sensibles.
+    Esto es un boceto; en producción se usaría algo más robusto.
+    """
+    t = text.lower()
+    categories: list[str] = []
+
+    # riesgo de auto-daño / ideación suicida
+    if any(
+        phrase in t
+        for phrase in [
+            "no quiero vivir",
+            "me quiero morir",
+            "hacerme daño",
+            "hacerme daño a mí mismo",
+            "me odio a mí mismo",
+        ]
+    ):
+        categories.append("riesgo_autolesion")
+
+    # violencia familiar
+    if any(
+        phrase in t
+        for phrase in [
+            "me pegan en la casa",
+            "me golpean en la casa",
+            "me pegan mis padres",
+            "me pegan mis papás",
+            "mi papá me golpea",
+            "mi mamá me golpea",
+        ]
+    ):
+        categories.append("violencia_familiar")
+
+    # acoso escolar (muy general)
+    if any(
+        phrase in t
+        for phrase in [
+            "me hacen bullying",
+            "me molestan siempre",
+            "me pegan en el colegio",
+            "me amenazan en el curso",
+        ]
+    ):
+        categories.append("acoso_escolar")
+
+    return categories
+
+def create_teacher_alert(
+    conn,
+    student_user_id: int,
+    course_id: Optional[int],
+    alert_type: str,
+    summary: str,
+):
+    with conn.cursor() as cur:
+        cur.execute(
+            """
+            INSERT INTO teacher_alerts (student_id, course_id, alert_type, summary, status)
+            VALUES (%s, %s, %s, %s, 'pending');
+            """,
+            (student_user_id, course_id, alert_type, summary[:1000]),
+        )
+
 # ---------- Helpers de BD ----------
 
 def upsert_user(conn, msg: MessageIn) -> int:
@@ -608,6 +797,4 @@ def extract_fuente_query(msg: MessageIn) -> str:
         return rest or "tu consulta"
     return text or "tu consulta"
 
-class SetRoleRequest(BaseModel):
-    telegram_id: int
-    role: UserRole
+
