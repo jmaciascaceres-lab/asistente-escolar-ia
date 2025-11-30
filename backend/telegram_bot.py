@@ -2,6 +2,7 @@ import os
 import time
 import requests
 from dotenv import load_dotenv
+from typing import Dict
 
 load_dotenv()  # carga .env desde el directorio actual
 
@@ -30,6 +31,7 @@ def send_message(chat_id: int, text: str):
         timeout=15,
     )
 
+user_roles: Dict[int, str] = {}  # telegram_id -> role ("student", "teacher", etc.)
 
 def main():
     print("🚀 Iniciando bot de Telegram (long polling)...")
@@ -52,6 +54,47 @@ def main():
                 chat_id = message["chat"]["id"]
                 from_id = message["from"]["id"]
 
+                # --- comandos para fijar rol ---
+                if text.startswith("/soy_estudiante"):
+                    user_roles[from_id] = "student"
+                    requests.post(
+                        f"{BACKEND_URL.rsplit('/api', 1)[0]}/api/v1/users/set_role",
+                        json={"telegram_id": from_id, "role": "student"},
+                        timeout=10,
+                    )
+                    send_message(chat_id, "Perfecto, te registraré como estudiante.")
+                    continue
+
+                if text.startswith("/soy_docente"):
+                    user_roles[from_id] = "teacher"
+                    requests.post(
+                        f"{BACKEND_URL.rsplit('/api', 1)[0]}/api/v1/users/set_role",
+                        json={"telegram_id": from_id, "role": "teacher"},
+                        timeout=10,
+                    )
+                    send_message(chat_id, "Listo, te registraré como docente.")
+                    continue
+
+                if text.startswith("/soy_apoderado"):
+                    user_roles[from_id] = "caregiver"
+                    requests.post(
+                        f"{BACKEND_URL.rsplit('/api', 1)[0]}/api/v1/users/set_role",
+                        json={"telegram_id": from_id, "role": "caregiver"},
+                        timeout=10,
+                    )
+                    send_message(chat_id, "Anotado, te registraré como madre/padre o apoderado.")
+                    continue
+
+                if text.startswith("/soy_coordinador") or text.startswith("/soy_coordinadora"):
+                    user_roles[from_id] = "coordinator"
+                    requests.post(
+                        f"{BACKEND_URL.rsplit('/api', 1)[0]}/api/v1/users/set_role",
+                        json={"telegram_id": from_id, "role": "coordinator"},
+                        timeout=10,
+                    )
+                    send_message(chat_id, "Te registraré como coordinador/a o encargado/a.")
+                    continue
+
                 # /start simple local
                 if text.startswith("/start"):
                     send_message(
@@ -66,10 +109,11 @@ def main():
                 command = parts[0]
                 # podríamos usar 'parts[1]' para algo más adelante
 
-                # TODO: rol real; por ahora asumimos 'student'
+                role = user_roles.get(from_id, "student")
+                # TODO: obtener curso_id del usuario
                 backend_payload = {
                     "telegram_id": from_id,
-                    "role": "student",
+                    "role": role,
                     "command": command,
                     "text": text,
                     "course_id": None,

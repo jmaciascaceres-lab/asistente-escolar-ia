@@ -175,6 +175,28 @@ async def handle_message(msg: MessageIn):
     )
 
 
+@app.post("/api/v1/users/set_role")
+async def set_user_role(req: SetRoleRequest):
+    """
+    Permite fijar/actualizar el rol de un usuario según su telegram_id.
+    Lo usamos desde el bot cuando la persona dice /soy_docente, etc.
+    """
+    from .db import get_db  # ya lo tienes importado más arriba
+
+    with get_db() as conn:
+        with conn.cursor() as cur:
+            cur.execute(
+                """
+                INSERT INTO users (telegram_id, role, course_id, settings)
+                VALUES (%s, %s::user_role, NULL, '{}'::jsonb)
+                ON CONFLICT (telegram_id) DO UPDATE
+                SET role = EXCLUDED.role,
+                    updated_at = NOW();
+                """,
+                (req.telegram_id, req.role.value),
+            )
+    return {"status": "ok"}
+
 # ---------- Helpers de lógica / orquestador mínimo ----------
 
 def infer_case_id(role: UserRole, command: str) -> Optional[str]:
@@ -193,7 +215,7 @@ def infer_case_id(role: UserRole, command: str) -> Optional[str]:
         if cmd == "/recordatorio":
             return "CU1"
 
-    if role == UserRole.teacher:
+    if role in (UserRole.teacher, UserRole.coordinator):
         if cmd == "/fuente":
             return "CU7"
         if cmd == "/resumen":
@@ -424,10 +446,18 @@ def generate_reply_stub(msg: MessageIn, case_id: Optional[str]):
             "CU8 (teacher-in-the-loop / alertas). Listaré o gestionaré alertas. [placeholder]"
         )
     else:
-        reply_text = (
-            "Comando recibido pero sin caso de uso específico (CU) asociado todavía.\n"
-            "Luego podré darte más opciones según tu rol."
-        )
+        # Mensaje especial si un rol no autorizado usa /fuente
+        if msg.command == "/fuente" and msg.role not in (UserRole.teacher, UserRole.coordinator):
+            reply_text = (
+                "El comando /fuente está pensado para docentes y equipos de convivencia. "
+                "Si eres profesor o encargada/o de convivencia, puedes configurar tu rol con "
+                "el comando correspondiente (por ejemplo, /soy_docente)."
+            )
+        else:
+            reply_text = (
+                "Comando recibido pero todavía no tengo un caso de uso específico asociado. "
+                "Prueba con /tarea, /explicar o, si eres docente, /fuente."
+            )
 
     return reply_text, used_rag, used_cag, sensitive_flag
 
@@ -577,3 +607,7 @@ def extract_fuente_query(msg: MessageIn) -> str:
         rest = text[len("/fuente"):].strip()
         return rest or "tu consulta"
     return text or "tu consulta"
+
+class SetRoleRequest(BaseModel):
+    telegram_id: int
+    role: UserRole

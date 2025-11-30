@@ -1,4 +1,5 @@
 from typing import List, Dict, Optional
+from psycopg2.extras import Json
 from .db import get_db
 from .embeddings import embed_texts, vector_to_str
 
@@ -23,10 +24,10 @@ def ingest_document(
             cur.execute(
                 """
                 INSERT INTO documents (title, doc_type, source, subject, year, metadata)
-                VALUES (%s, %s, %s, %s, %s, %s::jsonb)
+                VALUES (%s, %s, %s, %s, %s, %s)
                 RETURNING id;
                 """,
-                (title, doc_type, source, subject, year, metadata or {}),
+                (title, doc_type, source, subject, year, Json(metadata or {})),
             )
             row = cur.fetchone()
             return int(row[0])
@@ -96,6 +97,10 @@ def chunk_text(text: str, max_chars: int = 800, overlap: int = 100) -> List[str]
         chunk = text[start:end].strip()
         if chunk:
             chunks.append(chunk)
+        
+        if end == n:
+            break
+
         start = end - overlap  # solapamiento
         if start < 0:
             start = 0
