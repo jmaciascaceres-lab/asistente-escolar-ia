@@ -1,7 +1,8 @@
 from enum import Enum
 import time
 import json
-from typing import Optional
+from typing import Optional, List
+from .rag_service import ingest_document, search_documents
 
 from fastapi import FastAPI
 from pydantic import BaseModel
@@ -52,6 +53,34 @@ class MessageOut(BaseModel):
     used_cag: bool = False
     sensitive_flag: bool = False
 
+class RagQuery(BaseModel):
+    query: str
+    filters: dict = {}   # ej: {"doc_type": "normativa_nacional"}
+
+
+class RagDocumentOut(BaseModel):
+    id: int
+    title: str
+    doc_type: str
+    source: Optional[str] = None
+    subject: Optional[str] = None
+    year: Optional[int] = None
+    metadata: dict = {}
+
+
+class RagSearchResult(BaseModel):
+    query: str
+    documents: List[RagDocumentOut]
+
+
+class RagIngestRequest(BaseModel):
+    title: str
+    doc_type: str
+    source: Optional[str] = None
+    subject: Optional[str] = None
+    year: Optional[int] = None
+    metadata: dict = {}
+
 
 class HealthResponse(BaseModel):
     status: str
@@ -62,6 +91,45 @@ class HealthResponse(BaseModel):
 @app.get("/health", response_model=HealthResponse)
 async def health_check():
     return HealthResponse(status="ok")
+
+
+@app.post("/api/v1/rag/ingest")
+async def rag_ingest(req: RagIngestRequest):
+    """
+    Ingesta v0 de documentos para el RAG.
+    No parsea PDFs aún; asume que entregas título, tipo y metadata (p.ej. resumen corto).
+    """
+    doc_id = ingest_document(
+        title=req.title,
+        doc_type=req.doc_type,
+        source=req.source,
+        subject=req.subject,
+        year=req.year,
+        metadata=req.metadata,
+    )
+    return {"status": "ok", "id": doc_id}
+
+
+@app.post("/api/v1/rag/search", response_model=RagSearchResult)
+async def rag_search(payload: RagQuery):
+    """
+    Búsqueda v0 sobre la tabla documents.
+    Útil para probar que /explicar cite fuentes correctas.
+    """
+    docs = search_documents(payload.query, payload.filters)
+    out_docs = [
+        RagDocumentOut(
+            id=d["id"],
+            title=d["title"],
+            doc_type=d["doc_type"],
+            source=d["source"],
+            subject=d["subject"],
+            year=d["year"],
+            metadata=d["metadata"] or {},
+        )
+        for d in docs
+    ]
+    return RagSearchResult(query=payload.query, documents=out_docs)
 
 
 @app.post("/api/v1/messages", response_model=MessageOut)
@@ -197,6 +265,58 @@ def generate_cu1_plan(msg: MessageIn) -> str:
         "Si quieres, puedes pedirme otro plan escribiendo de nuevo /tarea con más detalles."
     return plan
 
+def extract_explanation_topic(msg: MessageIn) -> str:
+    """
+    Extrae el tema a explicar desde msg.text.
+    Si el usuario escribió `/explicar ...`, se toma lo que viene después.
+    """
+    text = msg.text.strip()
+    if text.startswith("/explicar"):
+        rest = text[len("/explicar"):].strip()
+        return rest or "este contenido"
+    return text or "este contenido"
+
+def generate_cu2_explanation(msg: MessageIn) -> str:
+    """
+    Explicación v0 para CU2:
+    - Usa una 'semiregla' para guiar al estudiante a entender el tema.
+    - Consulta el RAG v0 para poder citar al menos un documento relacionado.
+    """
+    topic = extract_explanation_topic(msg)
+    low_stim = msg.settings.get("modo") == "baja"
+
+    # Buscar documentos relacionados (idealmente curriculares o de la asignatura)
+    docs = search_documents(topic, filters={"doc_type": "curriculo"})
+    if not docs:
+        # Si no hay curriculo, busca en cualquier tipo
+        docs = search_documents(topic, filters={})
+
+    ref_line = ""
+    if docs:
+        d = docs[0]
+        fuente = d.get("source") or "fuente interna"
+        ref_line = f"\n\nReferencia asociada en los documentos del colegio: «{d['title']}» ({fuente})."
+
+    if low_stim:
+        body = (
+            f"Vamos a entender «{topic}» en pasos simples:\n\n"
+            "1) Qué es: escribe en una frase corta qué entiendes por este tema.\n"
+            "2) Para qué sirve: piensa en una situación concreta donde aparezca.\n"
+            "3) Ejemplo: anota un ejemplo muy sencillo (puede ser de tu vida diaria).\n"
+            "4) Duda principal: escribe una pregunta específica que todavía tengas.\n\n"
+            "Si quieres, puedes mandarme tu frase y tu ejemplo y seguimos desde ahí."
+        )
+    else:
+        body = (
+            f"Intentemos comprender «{topic}» ordenando la idea en 3 partes:\n\n"
+            "1) Definición: escribe con tus palabras qué es, evitando copiar literalmente.\n"
+            "2) Propósito: piensa para qué sirve o por qué es importante en la asignatura.\n"
+            "3) Ejemplo aplicado: inventa un ejemplo sencillo que conecte con algo de tu vida diaria.\n\n"
+            "Luego puedes enviarme tu definición o ejemplo y te puedo ayudar a mejorarlos."
+        )
+
+    return body + ref_line
+
 def generate_reply_stub(msg: MessageIn, case_id: Optional[str]):
     """
     Por ahora, genera textos simples según case_id para probar el flujo.
@@ -212,10 +332,7 @@ def generate_reply_stub(msg: MessageIn, case_id: Optional[str]):
     elif case_id == "CU2":
         used_rag = True
         used_cag = True
-        reply_text = (
-            "Voy a tratar tu pregunta como CU2 (explicación adaptada de contenido).\n"
-            "Pronto aquí combinaré materiales de clase + explicación simplificada. [placeholder]"
-        )
+        reply_text = generate_cu2_explanation(msg)
     elif case_id == "CU3":
         used_rag = True
         used_cag = True
