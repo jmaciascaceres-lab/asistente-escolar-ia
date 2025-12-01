@@ -28,7 +28,7 @@ Servicios principales:
 
 Flujo simplificado:
 
-```text
+```
 Usuario (Telegram)
       │
       ▼
@@ -42,7 +42,8 @@ Bot de Telegram  ──►  FastAPI (/api/v1/messages, /api/v1/rag/search, /api/
                                      • reminders
                                      • teacher_alerts
 
-```text
+
+```
 
 ## 2. Estructura del proyecto
 
