@@ -33,15 +33,127 @@ def send_message(chat_id: int, text: str):
 
 user_roles: Dict[int, str] = {}  # telegram_id -> role ("student", "teacher", etc.)
 
+def get_start_message_for_role(role: str) -> str:
+    if role == "teacher":
+        return (
+            "Hola 👋, soy el Asistente Escolar IA para docentes.\n\n"
+            "Soy un prototipo en desarrollo que te ayuda a:\n"
+            "• Consultar fuentes normativas e inclusivas (/fuente)\n"
+            "• Generar pre-resúmenes para reuniones o clases (/resumen)\n"
+            "• Crear preguntas de evaluación formativa (/quiz)\n"
+            "• Proponer adaptaciones de actividades con apoyos DUA (/adaptar)\n\n"
+            "Recuerda:\n"
+            "• No reemplazo tu criterio profesional ni la lectura directa de la normativa.\n"
+            "• Estoy en fase de prueba, por lo que algunas respuestas pueden ser incompletas.\n"
+            "• Usa siempre tu juicio docente y el apoyo del equipo de convivencia/PIE."
+        )
+
+    if role == "caregiver":
+        return (
+            "Hola 👋, soy el Asistente Escolar IA para madres, padres y apoderados.\n\n"
+            "En esta etapa piloto puedo ayudarte a:\n"
+            "• Entender conceptos generales como PIE y educación inclusiva (/pie)\n"
+            "• Recibir orientaciones breves para acompañar el estudio o el bienestar (/apoyo)\n"
+            "• Más adelante: revisar un reporte semanal simplificado (/reporte_semana)\n\n"
+            "Importante:\n"
+            "• No reemplazo la comunicación directa con el colegio.\n"
+            "• No soy un servicio de emergencia ni de atención clínica."
+        )
+
+    if role == "coordinator":
+        return (
+            "Hola 👋, soy el Asistente Escolar IA para equipos de convivencia e inclusión.\n\n"
+            "Puedes usarme para:\n"
+            "• Revisar alertas generadas a partir de mensajes sensibles de estudiantes (/alertas)\n"
+            "• Ver el detalle de una alerta específica (/detalle_alerta ID)\n"
+            "• Consultar normativa o lineamientos de inclusión y convivencia (/fuente, /resumen)\n\n"
+            "Recuerda:\n"
+            "• Las alertas son solo un apoyo inicial; la evaluación la realizan ustedes.\n"
+            "• Este sistema está en piloto, por lo que conviene revisar los procesos internos antes de tomar decisiones."
+        )
+
+    # Por defecto: estudiante
+    return (
+        "Hola 👋, soy el Asistente Escolar IA.\n\n"
+        "Puedo ayudarte a:\n"
+        "• Organizar tus tareas y estudiar mejor (/tarea)\n"
+        "• Entender temas de clases con explicaciones guiadas (/explicar)\n\n"
+        "Importante:\n"
+        "• No reemplazo a tus profes, solo los apoyo.\n"
+        "• Si te sientes muy mal o en peligro, habla con una persona adulta de confianza. "
+        "El bot NO es para emergencias.\n\n"
+        "Si eres profesor, escribe /soy_docente.\n"
+        "Si eres madre/padre o apoderado, escribe /soy_apoderado.\n"
+        "Si eres coordinador/a o equipo de convivencia, escribe /soy_coordinador."
+    )
+
+
+def get_help_message_for_role(role: str) -> str:
+    if role == "teacher":
+        return (
+            "Comandos para docentes:\n\n"
+            "• /fuente + texto\n"
+            "  Buscar fragmentos de normativa/inclusión para una situación concreta.\n"
+            "  Ej: /fuente Estudiante autista tuvo un episodio complejo en recreo\n\n"
+            "• /resumen + tema\n"
+            "  Generar un pre-resumen con ideas clave desde documentos relevantes.\n"
+            "  Ej: /resumen DUA en evaluación de lectura\n\n"
+            "• /quiz + tema\n"
+            "  Crear preguntas de evaluación formativa.\n"
+            "  Ej: /quiz ciclo del agua 6° básico\n\n"
+            "• /adaptar + descripción de actividad\n"
+            "  Proponer adaptaciones y apoyos DUA.\n"
+            "  Ej: /adaptar Prueba escrita de historia para 8° básico con estudiante con TDAH\n"
+        )
+
+    if role == "caregiver":
+        return (
+            "Comandos para madres, padres y apoderados:\n\n"
+            "• /pie + pregunta\n"
+            "  Explicaciones simples sobre PIE, inclusión educativa, etc.\n\n"
+            "• /apoyo + situación\n"
+            "  Orientaciones breves para acompañar el estudio y el bienestar.\n\n"
+            "Más adelante:\n"
+            "• /reporte_semana\n"
+            "  Ver un resumen simple del uso académico del asistente por parte de tu hijo/a "
+            "(cuando esta función esté activa y autorizada)."
+        )
+
+    if role == "coordinator":
+        return (
+            "Comandos para coordinadores/equipos de convivencia e inclusión:\n\n"
+            "• /alertas\n"
+            "  Lista las alertas pendientes generadas por mensajes sensibles de estudiantes.\n\n"
+            "• /detalle_alerta ID\n"
+            "  Muestra el detalle de una alerta específica.\n\n"
+            "• /fuente + texto\n"
+            "  Busca fragmentos normativos o lineamientos relevantes.\n\n"
+            "• /resumen + tema\n"
+            "  Pre-resumen de documentos para preparar reuniones o planes de apoyo."
+        )
+
+    # Estudiante por defecto
+    return (
+        "Comandos principales para estudiantes:\n\n"
+        "• /tarea + descripción\n"
+        "  Genera un plan para organizar tu tarea, estudiar una prueba o planificar la semana.\n"
+        "  Ej: /tarea Estudiar para la prueba de fracciones del lunes\n\n"
+        "• /explicar + tema\n"
+        "  Te guía para entender mejor un contenido y hacer un repaso.\n"
+        "  Ej: /explicar ciclo del agua\n\n"
+        "Más adelante podrás configurar opciones como modo de baja estimulación.\n"
+        "Si eres profesor o apoderado, recuerda usar /soy_docente o /soy_apoderado."
+    )
+
 def main():
     print("🚀 Iniciando bot de Telegram (long polling)...")
     offset = None
 
     while True:
         try:
-            updates = get_updates(offset)
-            for update in updates:
-                offset = update["update_id"] + 1
+            #updates = get_updates(offset)
+            for update in data["result"]:
+                #offset = update["update_id"] + 1
 
                 if "message" not in update:
                     continue
@@ -54,7 +166,7 @@ def main():
                 chat_id = message["chat"]["id"]
                 from_id = message["from"]["id"]
 
-                # --- comandos para fijar rol ---
+                # --- comandos de rol ---
                 if text.startswith("/soy_estudiante"):
                     user_roles[from_id] = "student"
                     requests.post(
@@ -95,16 +207,18 @@ def main():
                     send_message(chat_id, "Te registraré como coordinador/a o encargado/a.")
                     continue
 
-                # /start simple local
+                # --- /start y /ayuda ---
                 if text.startswith("/start"):
-                    send_message(
-                        chat_id,
-                        "Hola 👋, soy el Asistente Escolar IA.\n"
-                        "Por ahora estoy en fase de pruebas. Puedes usar comandos como /tarea o /explicar.",
-                    )
+                    role = user_roles.get(from_id, "student")
+                    send_message(chat_id, get_start_message_for_role(role))
                     continue
 
-                # --- comando /alertas solo para coordinadores ---
+                if text.startswith("/ayuda"):
+                    role = user_roles.get(from_id, "student")
+                    send_message(chat_id, get_help_message_for_role(role))
+                    continue
+
+                # --- /alertas (coordinador) ---
                 if text.startswith("/alertas"):
                     role = user_roles.get(from_id, "student")
                     if role != "coordinator":
@@ -123,13 +237,13 @@ def main():
                         if resp.status_code != 200:
                             send_message(chat_id, "No pude obtener las alertas en este momento.")
                             continue
-                        data = resp.json()
+                        data_alerts = resp.json()
                     except Exception as e:
                         print("Error obteniendo alertas:", e)
                         send_message(chat_id, "No pude obtener las alertas en este momento.")
                         continue
 
-                    alerts = data or []
+                    alerts = data_alerts or []
                     if not alerts:
                         send_message(chat_id, "No hay alertas pendientes por ahora.")
                         continue
@@ -142,7 +256,7 @@ def main():
                     send_message(chat_id, "\n".join(lines))
                     continue
 
-                # --- comando /detalle_alerta ID solo para coordinadores ---
+                # --- /detalle_alerta ID (coordinador) ---
                 if text.startswith("/detalle_alerta"):
                     role = user_roles.get(from_id, "student")
                     if role != "coordinator":
@@ -174,24 +288,106 @@ def main():
                         if resp.status_code != 200:
                             send_message(chat_id, "No pude obtener el detalle de la alerta.")
                             continue
-                        data = resp.json()
+                        data_alert = resp.json()
                     except Exception as e:
                         print("Error obteniendo detalle de alerta:", e)
                         send_message(chat_id, "No pude obtener el detalle de la alerta.")
                         continue
 
                     msg_lines = [
-                        f"Detalle alerta ID {data['alert_id']}:",
-                        f"- Tipo: {data['alert_type']}",
-                        f"- Estado: {data['status']}",
-                        f"- Estudiante_id: {data['student_id']}",
-                        f"- Curso_id: {data['course_id']}",
-                        f"- Creada: {data['created_at']}",
+                        f"Detalle alerta ID {data_alert['alert_id']}:",
+                        f"- Tipo: {data_alert['alert_type']}",
+                        f"- Estado: {data_alert['status']}",
+                        f"- Estudiante_id: {data_alert['student_id']}",
+                        f"- Curso_id: {data_alert['course_id']}",
+                        f"- Creada: {data_alert['created_at']}",
                         "",
                         "Resumen del mensaje:",
-                        data["summary"],
+                        data_alert["summary"],
                     ]
                     send_message(chat_id, "\n".join(msg_lines))
+                    continue
+
+                # --- /alerta_en_revision ID (coordinador) ---
+                if text.startswith("/alerta_en_revision"):
+                    role = user_roles.get(from_id, "student")
+                    if role != "coordinator":
+                        send_message(
+                            chat_id,
+                            "El comando /alerta_en_revision está pensado para coordinadores o equipos de convivencia."
+                        )
+                        continue
+
+                    parts = text.split(maxsplit=1)
+                    if len(parts) < 2:
+                        send_message(chat_id, "Uso: /alerta_en_revision ID.")
+                        continue
+
+                    try:
+                        alert_id = int(parts[1].strip())
+                    except ValueError:
+                        send_message(chat_id, "El ID de la alerta debe ser un número.")
+                        continue
+
+                    try:
+                        resp = requests.post(
+                            f"{BACKEND_URL.rsplit('/api', 1)[0]}/api/v1/alerts/{alert_id}/status",
+                            json={"status": "in_review"},
+                            timeout=15,
+                        )
+                        if resp.status_code == 404:
+                            send_message(chat_id, f"No encontré la alerta con ID {alert_id}.")
+                            continue
+                        if resp.status_code != 200:
+                            send_message(chat_id, "No pude actualizar el estado de la alerta.")
+                            continue
+                    except Exception as e:
+                        print("Error actualizando alerta:", e)
+                        send_message(chat_id, "No pude actualizar el estado de la alerta.")
+                        continue
+
+                    send_message(chat_id, f"La alerta {alert_id} ha sido marcada como en revisión.")
+                    continue
+
+                # --- /alerta_resuelta ID (coordinador) ---
+                if text.startswith("/alerta_resuelta"):
+                    role = user_roles.get(from_id, "student")
+                    if role != "coordinator":
+                        send_message(
+                            chat_id,
+                            "El comando /alerta_resuelta está pensado para coordinadores o equipos de convivencia."
+                        )
+                        continue
+
+                    parts = text.split(maxsplit=1)
+                    if len(parts) < 2:
+                        send_message(chat_id, "Uso: /alerta_resuelta ID (por ejemplo, /alerta_resuelta 3).")
+                        continue
+
+                    try:
+                        alert_id = int(parts[1].strip())
+                    except ValueError:
+                        send_message(chat_id, "El ID de la alerta debe ser un número.")
+                        continue
+
+                    try:
+                        resp = requests.post(
+                            f"{BACKEND_URL.rsplit('/api', 1)[0]}/api/v1/alerts/{alert_id}/status",
+                            json={"status": "resolved"},
+                            timeout=15,
+                        )
+                        if resp.status_code == 404:
+                            send_message(chat_id, f"No encontré la alerta con ID {alert_id}.")
+                            continue
+                        if resp.status_code != 200:
+                            send_message(chat_id, "No pude actualizar el estado de la alerta.")
+                            continue
+                    except Exception as e:
+                        print("Error actualizando alerta:", e)
+                        send_message(chat_id, "No pude actualizar el estado de la alerta.")
+                        continue
+
+                    send_message(chat_id, f"La alerta {alert_id} ha sido marcada como resuelta.")
                     continue
 
                 # comando = primera palabra (ej: /tarea), resto es argumento
@@ -204,10 +400,10 @@ def main():
                 backend_payload = {
                     "telegram_id": from_id,
                     "role": role,
-                    "command": command,
+                    "command": text.split()[0] if text.startswith("/") else None,
                     "text": text,
                     "course_id": None,
-                    "settings": {},  # luego se puede setear {"modo": "baja"} según preferencias
+                    "settings": {},
                 }
 
                 try:

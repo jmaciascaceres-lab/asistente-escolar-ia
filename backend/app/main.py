@@ -9,6 +9,9 @@ from pydantic import BaseModel
 
 from .db import init_db, close_db, get_db
 
+from datetime import datetime, timedelta
+
+from fastapi import HTTPException
 
 app = FastAPI(title="Asistente Escolar IA", version="0.1.0")
 
@@ -184,16 +187,23 @@ async def handle_message(msg: MessageIn):
             reply_text = reply_override
         if sensitive_flag_override:
             sensitive_flag = True
+        experiment_tag = msg.settings.get("experiment_tag")
+        extra = msg.settings.get("extra")
         log_interaction(
-            conn=conn,
+            conn,
             user_id=user_id,
-            msg=msg,
+            role=msg.role,
+            course_id=msg.course_id,
+            command=msg.command,
             case_id=case_id,
             latency_ms=latency_ms,
             used_rag=used_rag,
             used_cag=used_cag,
             sensitive_flag=sensitive_flag,
-            reply_text=reply_text,
+            raw_query=msg.text,
+            raw_reply=reply_text,
+            experiment_tag=experiment_tag,
+            extra=extra,
         )
 
     return MessageOut(
@@ -292,6 +302,36 @@ async def get_alert(alert_id: int):
         summary=row[6],
         last_update=row[7].isoformat() if row[7] else "",
     )
+
+class AlertStatusUpdateRequest(BaseModel):
+    status: str  # 'pending', 'in_review', 'resolved'
+
+@app.post("/api/v1/alerts/{alert_id}/status")
+async def update_alert_status(alert_id: int, req: AlertStatusUpdateRequest):
+    """
+    Actualiza el estado de una alerta.
+    Estados sugeridos: pending, in_review, resolved.
+    """
+    valid_status = {"pending", "in_review", "resolved"}
+    if req.status not in valid_status:
+        raise HTTPException(status_code=400, detail="Estado no válido")
+
+    with get_db() as conn:
+        with conn.cursor() as cur:
+            cur.execute(
+                """
+                UPDATE teacher_alerts
+                SET status = %s,
+                    last_update = NOW()
+                WHERE id = %s;
+                """,
+                (req.status, alert_id),
+            )
+            if cur.rowcount == 0:
+                raise HTTPException(status_code=404, detail="Alerta no encontrada")
+
+    return {"status": "ok", "alert_id": alert_id, "new_status": req.status}
+
 
 # ---------- Helpers de lógica / orquestador mínimo ----------
 
@@ -824,6 +864,122 @@ def generate_cu5_adaptation(msg: MessageIn) -> str:
     return header + consigna + apoyos_generales + ajustes_especificos + ref_lines + cierre
 
 
+def generate_cu6_report(msg: MessageIn) -> str:
+    """
+    CU6: reporte semanal de uso del asistente.
+    Versión v1: mira las interacciones y recordatorios del propio usuario
+    en los últimos 7 días.
+    """
+    low_stim = msg.settings.get("modo") == "baja"
+    telegram_id = msg.telegram_id
+
+    # Ventana: últimos 7 días
+    with get_db() as conn:
+        with conn.cursor() as cur:
+            # Obtener user_id y rol
+            cur.execute(
+                "SELECT id, role FROM users WHERE telegram_id = %s;",
+                (telegram_id,),
+            )
+            row = cur.fetchone()
+            if not row:
+                if low_stim:
+                    return (
+                        "Aún no tengo suficientes datos para mostrar un resumen semanal.\n"
+                        "Vuelve a intentarlo después de usar el asistente algunos días."
+                    )
+                return (
+                    "Todavía no tengo datos suficientes para generar un reporte semanal de uso.\n"
+                    "Prueba nuevamente luego de unos días de usar el asistente."
+                )
+
+            user_id, role_db = row[0], row[1]
+
+            # Interacciones últimos 7 días
+            cur.execute(
+                """
+                SELECT command, case_id, COUNT(*) AS n
+                FROM interaction_logs
+                WHERE user_id = %s
+                  AND timestamp >= NOW() - INTERVAL '7 days'
+                GROUP BY command, case_id
+                ORDER BY n DESC;
+                """,
+                (user_id,),
+            )
+            interactions = cur.fetchall()
+
+            # Total de interacciones
+            cur.execute(
+                """
+                SELECT COUNT(*)
+                FROM interaction_logs
+                WHERE user_id = %s
+                  AND timestamp >= NOW() - INTERVAL '7 days';
+                """,
+                (user_id,),
+            )
+            total_interactions = cur.fetchone()[0]
+
+            # Recordatorios últimos 7 días
+            # Nota: asumimos que reminders.user_id referencia al mismo user_id
+            cur.execute(
+                """
+                SELECT
+                  SUM(CASE WHEN completed_at IS NOT NULL THEN 1 ELSE 0 END) AS completados,
+                  SUM(CASE WHEN completed_at IS NULL THEN 1 ELSE 0 END) AS pendientes
+                FROM reminders
+                WHERE user_id = %s
+                  AND due_at >= NOW() - INTERVAL '7 days';
+                """,
+                (user_id,),
+            )
+            row_rem = cur.fetchone()
+            completed = row_rem[0] if row_rem[0] is not None else 0
+            pending = row_rem[1] if row_rem[1] is not None else 0
+
+    # Construir texto
+    if total_interactions == 0:
+        if low_stim:
+            return (
+                "En los últimos 7 días no hay uso registrado del asistente.\n"
+                "Cuando empieces a usarlo más seguido, te podré mostrar un resumen."
+            )
+        return (
+            "En los últimos 7 días no aparece uso registrado del asistente para este usuario.\n"
+            "Cuando haya más actividad, podré generar un reporte semanal."
+        )
+
+    lines = []
+    lines.append("Resumen de uso del asistente en los últimos 7 días:\n")
+    lines.append(f"• Interacciones totales: {total_interactions}")
+
+    if interactions:
+        lines.append("• Detalle por comando/caso de uso:")
+        for cmd, case_id, n in interactions:
+            cu_label = case_id if case_id else "sin CU asignado"
+            lines.append(f"   - {cmd} ({cu_label}): {n} veces")
+
+    lines.append(f"\nRecordatorios asociados en la semana:")
+    lines.append(f"• Recordatorios completados: {completed}")
+    lines.append(f"• Recordatorios pendientes: {pending}")
+
+    if low_stim:
+        lines.append(
+            "\nPuedes usar este resumen solo como referencia. "
+            "Si quieres mejorar la organización, intenta usar /tarea al empezar cada trabajo."
+        )
+    else:
+        lines.append(
+            "\nPuedes usar este resumen como una foto rápida del uso del asistente.\n"
+            "Si quieres apoyar mejor la organización, puede ser útil:\n"
+            "• Animar a usar /tarea al planificar pruebas o trabajos.\n"
+            "• Revisar juntos qué tipo de consultas se repiten más."
+        )
+
+    return "\n".join(lines)
+
+
 def generate_reply_stub(msg: MessageIn, case_id: Optional[str]):
     """
     Por ahora, genera textos simples según case_id para probar el flujo.
@@ -854,9 +1010,7 @@ def generate_reply_stub(msg: MessageIn, case_id: Optional[str]):
         reply_text = generate_cu5_adaptation(msg)
     elif case_id == "CU6":
         used_cag = True
-        reply_text = (
-            "Este flujo corresponde a CU6 (reporte / apoyo a familias). [placeholder]"
-        )
+        reply_text = generate_cu6_report(msg)
     elif case_id == "CU7":
         used_rag = True
         used_cag = True
@@ -1066,24 +1220,35 @@ def upsert_user(conn, msg: MessageIn) -> int:
 
 def log_interaction(
     conn,
+    *,
     user_id: int,
-    msg: MessageIn,
+    role: UserRole,
+    course_id: Optional[int],
+    command: Optional[str],
     case_id: Optional[str],
     latency_ms: int,
     used_rag: bool,
     used_cag: bool,
     sensitive_flag: bool,
-    reply_text: str,
-):
-    """
-    Inserta un registro en interaction_logs.
-    """
+    raw_query: str,
+    raw_reply: str,
+    experiment_tag: Optional[str] = None,
+    extra: Optional[dict] = None,
+) -> None:
     with conn.cursor() as cur:
         cur.execute(
             """
-            INSERT INTO interaction_logs (
+            INSERT INTO interaction_logs
+            (user_id, role, course_id, command, case_id,
+             latency_ms, used_rag, used_cag, sensitive_flag,
+             raw_query, raw_reply, experiment_tag, extra)
+            VALUES (%s, %s::user_role, %s, %s, %s,
+                    %s, %s, %s, %s,
+                    %s, %s, %s, %s::jsonb);
+            """,
+            (
                 user_id,
-                role,
+                role.value if isinstance(role, UserRole) else role,
                 course_id,
                 command,
                 case_id,
@@ -1092,24 +1257,12 @@ def log_interaction(
                 used_cag,
                 sensitive_flag,
                 raw_query,
-                raw_reply
-            )
-            VALUES (%s, %s::user_role, %s, %s, %s, %s, %s, %s, %s, %s, %s);
-            """,
-            (
-                user_id,
-                msg.role.value,
-                msg.course_id,
-                msg.command,
-                case_id,
-                latency_ms,
-                used_rag,
-                used_cag,
-                sensitive_flag,
-                msg.text,
-                reply_text,
+                raw_reply,
+                experiment_tag,
+                json.dumps(extra or {}),
             ),
         )
+
 
 def extract_fuente_query(msg: MessageIn) -> str:
     text = msg.text.strip()
