@@ -717,6 +717,112 @@ def generate_cu4_quiz(msg: MessageIn) -> str:
 
     return intro + "\n".join(base_questions) + extra_lines + cierre
 
+def generate_cu5_adaptation(msg: MessageIn) -> str:
+    """
+    CU5: Adaptar una actividad o texto incorporando apoyos DUA.
+    - Usa la descripción de la actividad.
+    - Propone apoyos de representación, acción/expresión y compromiso.
+    - Ajustes razonables si detecta TEA, TDAH, dislexia, etc.
+    - Cita 1–2 documentos relevantes de inclusión/DUA.
+    """
+    request = extract_adapt_request(msg)
+    low_stim = msg.settings.get("modo") == "baja"
+    req_lc = request.lower()
+
+    # Detección muy simple de necesidades mencionadas
+    has_tea = any(w in req_lc for w in ["tea", "autismo", "trastorno del espectro autista"])
+    has_tdah = any(w in req_lc for w in ["tdah", "déficit atencional", "deficit atencional"])
+    has_dislexia = any(w in req_lc for w in ["dislexia", "dificultades lectoras"])
+
+    # 1) Cabecera
+    header = "Propuesta de adaptación de actividad con enfoque DUA\n\n"
+    header += f"Descripción que entregaste:\n«{request}»\n\n"
+
+    # 2) Adaptación de la consigna (para todos los estudiantes)
+    if low_stim:
+        consigna = (
+            "Ajustes en la consigna (para todo el curso):\n"
+            "• Usa una sola instrucción por línea.\n"
+            "• Resalta en negrita o subraya los verbos clave (por ejemplo: leer, subrayar, escribir).\n"
+            "• Evita oraciones muy largas; corta en frases de 10–15 palabras.\n"
+            "• Indica el tiempo estimado y el formato esperado de la respuesta.\n"
+        )
+    else:
+        consigna = (
+            "Sugerencias para adaptar la consigna (benefician a todo el curso):\n"
+            "• Divide la instrucción en pasos numerados (1, 2, 3...).\n"
+            "• Destaca los verbos clave y productos esperados (por ejemplo: “escribe un párrafo de 5 líneas”).\n"
+            "• Evita detalles irrelevantes en la consigna; colócalos como ejemplos aparte.\n"
+            "• Explicita el tiempo disponible y los criterios principales de logro.\n"
+        )
+
+    # 3) Apoyos DUA generales
+    apoyos_generales = (
+        "\nApoyos DUA sugeridos:\n"
+        "• Representación: ofrece un ejemplo resuelto o modelo, usa esquemas o imágenes simples cuando sea posible.\n"
+        "• Acción y expresión: permite que algunos estudiantes respondan con esquema, audio corto o viñetas en vez de solo texto largo.\n"
+        "• Compromiso: cuando se pueda, deja que el estudiante elija entre 2 temas o ejemplos cercanos a su realidad.\n"
+    )
+
+    # 4) Ajustes razonables según necesidad
+    ajustes_especificos = ""
+
+    if has_tea:
+        ajustes_especificos += (
+            "\nAjustes sugeridos cuando se menciona TEA/autismo:\n"
+            "• Anticipa la secuencia de la actividad (por ejemplo, muestra un pequeño listado visual con los pasos).\n"
+            "• Reduce estímulos distractores en la hoja o pantalla (menos recuadros, menos colores fuertes).\n"
+            "• Permite más tiempo para responder y, si es posible, un espacio más tranquilo.\n"
+            "• Da la opción de que las instrucciones se repitan de manera clara y literal ante la duda.\n"
+        )
+
+    if has_tdah:
+        ajustes_especificos += (
+            "\nAjustes sugeridos cuando se menciona TDAH/déficit atencional:\n"
+            "• Fragmenta la actividad en bloques de 10–15 minutos con pequeñas pausas guiadas.\n"
+            "• Usa listas cortas de elementos por ítem (por ejemplo, 3 preguntas por hoja en vez de 10 juntas).\n"
+            "• Permite el uso de organizadores gráficos para estructurar la respuesta.\n"
+            "• Avisa con antelación cuánto tiempo falta para terminar.\n"
+        )
+
+    if has_dislexia:
+        ajustes_especificos += (
+            "\nAjustes sugeridos cuando se menciona dislexia/dificultades lectoras:\n"
+            "• Usa letra clara y tamaño mayor (al menos 12–14 pt), con buen espaciado.\n"
+            "• Evita párrafos muy densos; separa en bloques cortos con subtítulos.\n"
+            "• Permite que alguien lea la consigna en voz alta o entrega audio de apoyo.\n"
+            "• Ofrece más tiempo y reduce la cantidad de lectura no esencial.\n"
+        )
+
+    if not ajustes_especificos:
+        ajustes_especificos = (
+            "\nSi algún estudiante tiene necesidades específicas (por ejemplo, TEA, TDAH o dificultades lectoras), "
+            "puede ser útil coordinar ajustes más personalizados con el equipo PIE o de inclusión."
+        )
+
+    # 5) Referencias desde RAG
+    # Buscamos documentos de DUA/inclusión para citar al menos uno
+    docs = search_documents("DUA", filters={"doc_type": "normativa_nacional"})
+    if not docs:
+        docs = search_documents("inclusion educativa", filters={})
+
+    ref_lines = ""
+    if docs:
+        d = docs[0]
+        fuente = d.get("source") or "fuente interna"
+        ref_lines = (
+            f"\n\nReferencia sugerida en los documentos del establecimiento: "
+            f"«{d['title']}» ({fuente}). Revisa ese material para alinear la adaptación "
+            "con las orientaciones oficiales."
+        )
+
+    cierre = (
+        "\n\nRecuerda que estas son sugerencias iniciales. La decisión final sobre ajustes y adecuaciones "
+        "debe tomarse en conjunto con el equipo del establecimiento, respetando la normativa vigente."
+    )
+
+    return header + consigna + apoyos_generales + ajustes_especificos + ref_lines + cierre
+
 
 def generate_reply_stub(msg: MessageIn, case_id: Optional[str]):
     """
@@ -745,9 +851,7 @@ def generate_reply_stub(msg: MessageIn, case_id: Optional[str]):
     elif case_id == "CU5":
         used_rag = True
         used_cag = True
-        reply_text = (
-            "Lo tomaré como CU5 (adaptación de texto con apoyos DUA). [placeholder]"
-        )
+        reply_text = generate_cu5_adaptation(msg)
     elif case_id == "CU6":
         used_cag = True
         reply_text = (
@@ -1028,6 +1132,12 @@ def extract_quiz_query(msg: MessageIn) -> str:
         return rest or "este contenido"
     return text or "este contenido"
 
+def extract_adapt_request(msg: MessageIn) -> str:
+    text = msg.text.strip()
+    if text.startswith("/adaptar"):
+        rest = text[len("/adaptar"):].strip()
+        return rest or "esta actividad"
+    return text or "esta actividad"
 
 
 
