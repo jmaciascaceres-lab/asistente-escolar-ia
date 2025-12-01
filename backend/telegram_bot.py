@@ -151,9 +151,9 @@ def main():
 
     while True:
         try:
-            #updates = get_updates(offset)
-            for update in data["result"]:
-                #offset = update["update_id"] + 1
+            updates = get_updates(offset)
+            for update in updates:
+                offset = update["update_id"] + 1
 
                 if "message" not in update:
                     continue
@@ -390,13 +390,8 @@ def main():
                     send_message(chat_id, f"La alerta {alert_id} ha sido marcada como resuelta.")
                     continue
 
-                # comando = primera palabra (ej: /tarea), resto es argumento
-                parts = text.split(" ", 1)
-                command = parts[0]
-                # podríamos usar 'parts[1]' para algo más adelante
-
+                # --- resto de mensajes: van al backend /api/v1/messages ---
                 role = user_roles.get(from_id, "student")
-                # TODO: obtener curso_id del usuario
                 backend_payload = {
                     "telegram_id": from_id,
                     "role": role,
@@ -427,7 +422,6 @@ def main():
         except Exception as e:
             print("Error en el polling:", e)
             time.sleep(5)
-
 
 if __name__ == "__main__":
     main()
