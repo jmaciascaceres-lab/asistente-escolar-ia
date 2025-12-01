@@ -47,6 +47,7 @@ Bot de Telegram  ──►  FastAPI (/api/v1/messages, /api/v1/rag/search, /api/
 
 ## 2. Estructura del proyecto
 
+```
 .
 ├── backend/
 │   ├── app/
@@ -64,3 +65,4 @@ Bot de Telegram  ──►  FastAPI (/api/v1/messages, /api/v1/rag/search, /api/
 │   └── data/                      # Volumen de datos de Postgres
 ├── docker-compose.yml
 └── README.md
+```
