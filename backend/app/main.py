@@ -867,22 +867,23 @@ def generate_cu5_adaptation(msg: MessageIn) -> str:
 def generate_cu6_report(msg: MessageIn) -> str:
     """
     CU6: reporte semanal de uso del asistente.
-    Versión v1: mira las interacciones y recordatorios del propio usuario
-    en los últimos 7 días.
+    v1: mira las interacciones y recordatorios del propio usuario
+    en los últimos 7 días. Si el rol es 'caregiver' ajusta el texto
+    hablando de 'este chat' y 'hijo/hija'.
     """
     low_stim = msg.settings.get("modo") == "baja"
     telegram_id = msg.telegram_id
 
-    # Ventana: últimos 7 días
     with get_db() as conn:
         with conn.cursor() as cur:
-            # Obtener user_id y rol
+            # 1) obtener id de usuario y rol en la tabla users
             cur.execute(
                 "SELECT id, role FROM users WHERE telegram_id = %s;",
                 (telegram_id,),
             )
             row = cur.fetchone()
             if not row:
+                # texto distinto si es apoderado
                 if low_stim:
                     return (
                         "Aún no tengo suficientes datos para mostrar un resumen semanal.\n"
@@ -895,7 +896,7 @@ def generate_cu6_report(msg: MessageIn) -> str:
 
             user_id, role_db = row[0], row[1]
 
-            # Interacciones últimos 7 días
+            # 2) interacciones últimos 7 días
             cur.execute(
                 """
                 SELECT command, case_id, COUNT(*) AS n
@@ -909,7 +910,6 @@ def generate_cu6_report(msg: MessageIn) -> str:
             )
             interactions = cur.fetchall()
 
-            # Total de interacciones
             cur.execute(
                 """
                 SELECT COUNT(*)
@@ -921,8 +921,7 @@ def generate_cu6_report(msg: MessageIn) -> str:
             )
             total_interactions = cur.fetchone()[0]
 
-            # Recordatorios últimos 7 días
-            # Nota: asumimos que reminders.user_id referencia al mismo user_id
+            # 3) recordatorios (si los usas) últimos 7 días
             cur.execute(
                 """
                 SELECT
@@ -938,8 +937,16 @@ def generate_cu6_report(msg: MessageIn) -> str:
             completed = row_rem[0] if row_rem[0] is not None else 0
             pending = row_rem[1] if row_rem[1] is not None else 0
 
-    # Construir texto
+    # 4) si no hay interacciones, mensaje especial para apoderado
     if total_interactions == 0:
+        if role_db == "caregiver":
+            return (
+                "En los últimos 7 días no hay uso registrado del asistente desde este chat.\n"
+                "Más adelante, cuando el colegio vincule este chat al estudiante, aquí verás "
+                "un resumen del uso del asistente por parte de tu hijo o hija."
+            )
+
+        # resto de roles
         if low_stim:
             return (
                 "En los últimos 7 días no hay uso registrado del asistente.\n"
@@ -950,8 +957,14 @@ def generate_cu6_report(msg: MessageIn) -> str:
             "Cuando haya más actividad, podré generar un reporte semanal."
         )
 
-    lines = []
-    lines.append("Resumen de uso del asistente en los últimos 7 días:\n")
+    # 5) construir el resumen
+    # primera línea: distinta si es apoderado
+    if role_db == "caregiver":
+        header = "Resumen de uso del asistente en este chat durante los últimos 7 días:\n"
+    else:
+        header = "Resumen de uso del asistente en los últimos 7 días:\n"
+
+    lines = [header]
     lines.append(f"• Interacciones totales: {total_interactions}")
 
     if interactions:
@@ -960,22 +973,30 @@ def generate_cu6_report(msg: MessageIn) -> str:
             cu_label = case_id if case_id else "sin CU asignado"
             lines.append(f"   - {cmd} ({cu_label}): {n} veces")
 
-    lines.append(f"\nRecordatorios asociados en la semana:")
+    lines.append("\nRecordatorios asociados en la semana:")
     lines.append(f"• Recordatorios completados: {completed}")
     lines.append(f"• Recordatorios pendientes: {pending}")
 
-    if low_stim:
+    # 6) cierre distinto para apoderado vs otros
+    if role_db == "caregiver":
         lines.append(
-            "\nPuedes usar este resumen solo como referencia. "
-            "Si quieres mejorar la organización, intenta usar /tarea al empezar cada trabajo."
+            "\nNota: por ahora este resumen considera solo el uso desde este chat. "
+            "Cuando el colegio vincule este chat al estudiante, el reporte se ajustará para "
+            "mostrar específicamente el uso de tu hijo o hija."
         )
     else:
-        lines.append(
-            "\nPuedes usar este resumen como una foto rápida del uso del asistente.\n"
-            "Si quieres apoyar mejor la organización, puede ser útil:\n"
-            "• Animar a usar /tarea al planificar pruebas o trabajos.\n"
-            "• Revisar juntos qué tipo de consultas se repiten más."
-        )
+        if low_stim:
+            lines.append(
+                "\nPuedes usar este resumen solo como referencia. "
+                "Si quieres mejorar la organización, intenta usar /tarea al empezar cada trabajo."
+            )
+        else:
+            lines.append(
+                "\nPuedes usar este resumen como una foto rápida del uso del asistente.\n"
+                "Si quieres apoyar mejor la organización, puede ser útil:\n"
+                "• Animar a usar /tarea al planificar pruebas o trabajos.\n"
+                "• Revisar juntos qué tipo de consultas se repiten más."
+            )
 
     return "\n".join(lines)
 
