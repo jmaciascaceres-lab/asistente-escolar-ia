@@ -4,6 +4,11 @@ import json
 from typing import Optional, List, Tuple    
 from .rag_service import search_documents, search_snippets
 
+from .cases.cu2_explicar import explicar_con_llm
+from .cases.cu3_resumen import resumen_con_llm
+from .cases.cu4_quiz import quiz_con_llm
+from .cases.cu5_adaptar import adaptar_con_llm
+
 from fastapi import FastAPI
 from pydantic import BaseModel
 
