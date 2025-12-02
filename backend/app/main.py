@@ -1072,14 +1072,7 @@ def generate_reply_stub(msg: MessageIn, case_id: Optional[str]):
         reply_text = (
             "CU8 (teacher-in-the-loop / alertas). Listaré o gestionaré alertas. [placeholder]"
         )
-    else:
-        # Mensaje especial si un rol no autorizado usa /fuente
-        if msg.command == "/fuente" and msg.role not in (UserRole.teacher, UserRole.coordinator):
-            reply_text = (
-                "El comando /fuente está pensado para docentes y equipos de convivencia. "
-                "Si eres profesor o encargada/o de convivencia, puedes configurar tu rol con "
-                "el comando correspondiente (por ejemplo, /soy_docente)."
-            )
+
     else:
         # Mensaje especial si un rol no autorizado usa /fuente
         if msg.command == "/fuente" and msg.role not in (UserRole.teacher, UserRole.coordinator):
