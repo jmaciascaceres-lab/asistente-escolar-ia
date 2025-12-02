@@ -8,6 +8,11 @@ load_dotenv()  # carga .env desde el directorio actual
 
 TOKEN = os.getenv("TELEGRAM_BOT_TOKEN")
 BACKEND_URL = os.getenv("BACKEND_URL", "http://localhost:8000/api/v1/messages")
+EXPERIMENT_TAG_DOCENTES = "pilot_docentes_2025S1"
+EXTRA_BASE_DOCENTES = {
+    "contexto": "taller_docentes",
+    "pais": "Chile"
+}
 
 if not TOKEN:
     raise RuntimeError("TELEGRAM_BOT_TOKEN no está definido en .env")
@@ -392,13 +397,21 @@ def main():
 
                 # --- resto de mensajes: van al backend /api/v1/messages ---
                 role = user_roles.get(from_id, "student")
+
+                settings = {}
+
+                # Si es docente y estamos en el piloto, marcamos la interacción
+                if role == "teacher":
+                    settings["experiment_tag"] = EXPERIMENT_TAG_DOCENTES
+                    settings["extra"] = {**EXTRA_BASE_DOCENTES}
+
                 backend_payload = {
                     "telegram_id": from_id,
                     "role": role,
                     "command": text.split()[0] if text.startswith("/") else None,
                     "text": text,
                     "course_id": None,
-                    "settings": {},
+                    "settings": settings,
                 }
 
                 try:

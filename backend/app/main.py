@@ -175,7 +175,13 @@ async def handle_message(msg: MessageIn):
     case_id = infer_case_id(msg.role, msg.command)
 
     # Placeholder de lógica: genera respuesta básica según CU
-    reply_text, used_rag, used_cag, sensitive_flag = generate_reply_stub(msg, case_id)
+    reply_text,
+    used_rag,
+    used_cag,
+    sensitive_flag,
+    llm_model,
+    llm_prompt_tokens,
+    llm_completion_tokens = generate_reply_stub(msg, case_id)
 
     latency_ms = int((time.time() - start) * 1000)
 
@@ -204,6 +210,9 @@ async def handle_message(msg: MessageIn):
             raw_reply=reply_text,
             experiment_tag=experiment_tag,
             extra=extra,
+            llm_model=llm_model,
+            llm_prompt_tokens=llm_prompt_tokens,
+            llm_completion_tokens=llm_completion_tokens,
         )
 
     return MessageOut(
@@ -1010,25 +1019,41 @@ def generate_reply_stub(msg: MessageIn, case_id: Optional[str]):
     used_cag = False
     sensitive_flag = False
 
+    llm_model = None
+    llm_prompt_tokens = None
+    llm_completion_tokens = None
+
     if case_id == "CU1":
         used_cag = True
         reply_text = generate_cu1_plan(msg)
     elif case_id == "CU2":
         used_rag = True
         used_cag = True
-        reply_text = generate_cu2_explanation(msg)
+        reply_text, llm_meta = explicar_con_llm(msg)
+        llm_model = llm_meta["llm_model"]
+        llm_prompt_tokens = llm_meta["llm_prompt_tokens"]
+        llm_completion_tokens = llm_meta["llm_completion_tokens"]
     elif case_id == "CU3":
         used_rag = True
         used_cag = True
-        reply_text = generate_cu3_summary(msg)
+        reply_text, llm_meta = resumen_con_llm(msg)
+        llm_model = llm_meta["llm_model"]
+        llm_prompt_tokens = llm_meta["llm_prompt_tokens"]
+        llm_completion_tokens = llm_meta["llm_completion_tokens"]
     elif case_id == "CU4":
         used_rag = True
         used_cag = True
-        reply_text = generate_cu4_quiz(msg)
+        reply_text, llm_meta = quiz_con_llm(msg)
+        llm_model = llm_meta["llm_model"]
+        llm_prompt_tokens = llm_meta["llm_prompt_tokens"]
+        llm_completion_tokens = llm_meta["llm_completion_tokens"]
     elif case_id == "CU5":
         used_rag = True
         used_cag = True
-        reply_text = generate_cu5_adaptation(msg)
+        reply_text, llm_meta = adaptar_con_llm(msg)
+        llm_model = llm_meta["llm_model"]
+        llm_prompt_tokens = llm_meta["llm_prompt_tokens"]
+        llm_completion_tokens = llm_meta["llm_completion_tokens"]
     elif case_id == "CU6":
         used_cag = True
         reply_text = generate_cu6_report(msg)
@@ -1050,13 +1075,30 @@ def generate_reply_stub(msg: MessageIn, case_id: Optional[str]):
                 "Si eres profesor o encargada/o de convivencia, puedes configurar tu rol con "
                 "el comando correspondiente (por ejemplo, /soy_docente)."
             )
+    else:
+        # Mensaje especial si un rol no autorizado usa /fuente
+        if msg.command == "/fuente" and msg.role not in (UserRole.teacher, UserRole.coordinator):
+            reply_text = (
+                "El comando /fuente está pensado para docentes y equipos de convivencia. "
+                "Si eres profesor o encargada/o de convivencia, puedes configurar tu rol con "
+                "el comando correspondiente (por ejemplo, /soy_docente)."
+            )
         else:
             reply_text = (
                 "Comando recibido pero todavía no tengo un caso de uso específico asociado. "
                 "Prueba con /tarea, /explicar o, si eres docente, /fuente."
             )
 
-    return reply_text, used_rag, used_cag, sensitive_flag
+    # AHORA devolvemos también los metadatos del LLM
+    return (
+        reply_text,
+        used_rag,
+        used_cag,
+        sensitive_flag,
+        llm_model,
+        llm_prompt_tokens,
+        llm_completion_tokens,
+    )
 
 def generate_cu7_response(msg: MessageIn) -> str:
     """
@@ -1255,21 +1297,29 @@ def log_interaction(
     raw_reply: str,
     experiment_tag: Optional[str] = None,
     extra: Optional[dict] = None,
+    llm_model: Optional[str] = None,
+    llm_prompt_tokens: Optional[int] = None,
+    llm_completion_tokens: Optional[int] = None,
 ) -> None:
+    import json
     with conn.cursor() as cur:
         cur.execute(
             """
             INSERT INTO interaction_logs
             (user_id, role, course_id, command, case_id,
              latency_ms, used_rag, used_cag, sensitive_flag,
-             raw_query, raw_reply, experiment_tag, extra)
+             raw_query, raw_reply,
+             experiment_tag, extra,
+             llm_model, llm_prompt_tokens, llm_completion_tokens)
             VALUES (%s, %s::user_role, %s, %s, %s,
                     %s, %s, %s, %s,
-                    %s, %s, %s, %s::jsonb);
+                    %s, %s,
+                    %s, %s::jsonb,
+                    %s, %s, %s);
             """,
             (
                 user_id,
-                role.value if isinstance(role, UserRole) else role,
+                role.value if hasattr(role, "value") else role,
                 course_id,
                 command,
                 case_id,
@@ -1281,6 +1331,9 @@ def log_interaction(
                 raw_reply,
                 experiment_tag,
                 json.dumps(extra or {}),
+                llm_model,
+                llm_prompt_tokens,
+                llm_completion_tokens,
             ),
         )
 
