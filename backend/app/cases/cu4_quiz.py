@@ -15,12 +15,6 @@ def _extract_quiz_query_from_msg(msg) -> str:
 
 
 def quiz_con_llm(msg) -> Tuple[str, dict]:
-    """
-    CU4: /quiz para docentes (evaluación formativa).
-    Devuelve:
-      - reply_text: str con las preguntas
-      - llm_meta: dict con modelo y tokens.
-    """
     user_query = _extract_quiz_query_from_msg(msg)
 
     # 1) Recuperar snippets relacionados (idealmente currículo)
