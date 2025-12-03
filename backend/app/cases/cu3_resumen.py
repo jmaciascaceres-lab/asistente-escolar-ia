@@ -4,10 +4,11 @@ from typing import Tuple
 from ..rag_service import search_snippets
 from ..llm_client import generate_llm_answer, LLM_MODEL_NAME
 from ..llm_prompts import SYSTEM_PROMPT_TEACHER, build_cu3_user_prompt
+from ..utils_sources import build_sources_block_from_snippets
 
 
 def _extract_resumen_query_from_msg(msg) -> str:
-    text = msg.text.strip()
+    text = (msg.text or "").strip()
     if text.startswith("/resumen"):
         rest = text[len("/resumen"):].strip()
         return rest or "tu tema"
@@ -16,52 +17,54 @@ def _extract_resumen_query_from_msg(msg) -> str:
 
 def resumen_con_llm(msg) -> Tuple[str, dict]:
     """
-    CU3: /resumen para docentes.
-    Devuelve:
-      - reply_text: str
-      - llm_meta: dict con modelo y tokens (para log_interaction).
+    CU3: pre-resumen para adultos (docentes, coordinadores, apoderados).
+    Retorna (texto_respuesta, llm_meta).
     """
-    user_query = _extract_resumen_query_from_msg(msg)
+    query = _extract_resumen_query_from_msg(msg)
 
-    # 1) Buscar contexto en RAG
-    snippets = search_snippets(
-        query=user_query,
-        filters={},   # o filtra por doc_type si quieres
-        k=6,
-    )
+    # 1) Preferimos normativa / inclusión
+    preferred_types = ["normativa_nacional", "inclusion_autismo", "paec", "reglamento_interno"]
+    snippets = []
+    for t in preferred_types:
+        snippets = search_snippets(query, filters={"doc_type": t}, k=4)
+        if snippets:
+            break
 
-    # 2) Armar texto de contexto a partir de los snippets
+    if not snippets:
+        snippets = search_snippets(query, filters={}, k=4)
+
+    # 2) Contexto para el LLM
     context_blocks = []
     for i, sn in enumerate(snippets, start=1):
-        # Ajusta estos campos a tu estructura real de snippet
         title = sn.get("title") or "sin título"
         source = sn.get("source") or "fuente interna"
         content = sn.get("content") or ""
         context_blocks.append(
             f"[Fragmento {i}] Documento: {title} ({source})\n{content}"
         )
-
     context_text = "\n\n".join(context_blocks)
 
-    # 3) Prompt de usuario específico para CU3
+    # 3) Prompt CU3
     user_prompt = build_cu3_user_prompt(
-        user_query=user_query,
+        query=query,
         context_text=context_text,
     )
 
-    # 4) Llamada al LLM
     answer_text, prompt_tokens, completion_tokens = generate_llm_answer(
         system_prompt=SYSTEM_PROMPT_TEACHER,
         user_prompt=user_prompt,
-        max_new_tokens=500,
-        temperature=0.5,
+        max_new_tokens=450,
+        temperature=0.6,
     )
 
-    # 5) Metadatos LLM
+    # 4) Fuentes
+    sources_block = build_sources_block_from_snippets(snippets)
+    if sources_block:
+        answer_text = answer_text.rstrip() + "\n\n" + sources_block
+
     llm_meta = {
         "llm_model": LLM_MODEL_NAME,
         "llm_prompt_tokens": prompt_tokens,
         "llm_completion_tokens": completion_tokens,
     }
-
     return answer_text.strip(), llm_meta

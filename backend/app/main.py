@@ -58,10 +58,10 @@ class MessageIn(BaseModel):
     """
     telegram_id: int
     role: UserRole
-    command: str          # ej: "/tarea"
-    text: str             # texto completo enviado por la persona
-    course_id: Optional[int] = None   # por ahora opcional, se puede dejar en null
-    settings: dict = {}                # ej: {"modo": "baja"}
+    command: Optional[str] = None   # 👈 antes era str
+    text: str
+    course_id: Optional[int] = None
+    settings: dict = {}
 
 
 class MessageOut(BaseModel):
@@ -390,22 +390,27 @@ def handle_safety_and_alerts(conn, user_id: int, msg: MessageIn) -> Tuple[bool, 
 
     return True, reply
 
-def infer_case_id(role: UserRole, command: str) -> Optional[str]:
+def infer_case_id(role: UserRole, command: Optional[str]) -> Optional[str]:
     """
     Mapea (rol, comando) al case_id (CU1..CU8).
-    Por ahora consideramos sólo los comandos principales.
+    Ahora acepta command = None y permite que docentes/coordinadores
+    usen también /explicar (CU2).
     """
+    if not command:
+        return None
+
     cmd = command.strip().lower()
 
+    # --- Estudiantes ---
     if role == UserRole.student:
         if cmd == "/tarea":
             return "CU1"
         if cmd == "/explicar":
             return "CU2"
-        # /recordatorio lo asociamos a CU1 (apoyo a planificación)
         if cmd == "/recordatorio":
             return "CU1"
 
+    # --- Docentes y coordinadores (uso "pro" de comandos) ---
     if role in (UserRole.teacher, UserRole.coordinator):
         if cmd == "/fuente":
             return "CU7"
@@ -415,7 +420,11 @@ def infer_case_id(role: UserRole, command: str) -> Optional[str]:
             return "CU4"
         if cmd == "/adaptar":
             return "CU5"
+        # 👇 nuevo: permitir /explicar para docentes/coordinadores
+        if cmd == "/explicar":
+            return "CU2"
 
+    # --- Madres/padres/apoderados ---
     if role == UserRole.caregiver:
         if cmd == "/reporte_semana":
             return "CU6"
@@ -424,12 +433,14 @@ def infer_case_id(role: UserRole, command: str) -> Optional[str]:
         if cmd == "/apoyo":
             return "CU6"
 
+    # --- Comandos especiales solo coordinador ---
     if role == UserRole.coordinator:
         if cmd == "/alertas":
             return "CU8"
 
     # comandos genéricos (/start, /ayuda, etc.) o no mapeados
     return None
+
 
 def extract_task_description(msg: MessageIn) -> str:
     """

@@ -1,39 +1,66 @@
 # backend/app/cases/cu2_explicar.py
-from typing import List
+from typing import Tuple
+
 from ..rag_service import search_snippets
 from ..llm_client import generate_llm_answer, LLM_MODEL_NAME
 from ..llm_prompts import SYSTEM_PROMPT_STUDENT, build_cu2_user_prompt
+from ..utils_sources import build_sources_block_from_snippets
 
-def explicar_con_llm(msg):
+
+def _extract_explanation_topic_from_msg(msg) -> str:
+    text = (msg.text or "").strip()
+    if text.startswith("/explicar"):
+        rest = text[len("/explicar"):].strip()
+        return rest or "este contenido"
+    return text or "este contenido"
+
+
+def explicar_con_llm(msg) -> Tuple[str, dict]:
     """
-    Devuelve:
-      - reply_text: str
-      - llm_meta: dict con modelo y tokens
+    CU2: explicación de contenido para estudiantes con LLM + RAG.
+    Retorna (texto_respuesta, llm_meta).
     """
-    # Extraer el texto del mensaje
-    user_query = msg.text
-    
-    # search_snippets no acepta doc_types, y k=4 es correcto
-    snippets = search_snippets(query=user_query, k=4)
-    
-    context_text = "\n\n".join(
-        f"[Fragmento {i}] ({sn.get('source', 'desconocido')})\n{sn.get('content', '')}"
-        for i, sn in enumerate(snippets, start=1)
+    topic = _extract_explanation_topic_from_msg(msg)
+    low_stim = msg.settings.get("modo") == "baja"
+
+    # 1) Recuperar snippets de currículo primero
+    snippets = search_snippets(topic, filters={"doc_type": "curriculo"}, k=4)
+    if not snippets:
+        snippets = search_snippets(topic, filters={}, k=4)
+
+    # 2) Construir contexto para el LLM
+    context_blocks = []
+    for i, sn in enumerate(snippets, start=1):
+        title = sn.get("title") or "sin título"
+        source = sn.get("source") or "fuente interna"
+        content = sn.get("content") or ""
+        context_blocks.append(
+            f"[Fragmento {i}] Documento: {title} ({source})\n{content}"
+        )
+    context_text = "\n\n".join(context_blocks)
+
+    # 3) Prompt específico para CU2
+    user_prompt = build_cu2_user_prompt(
+        topic=topic,
+        context_text=context_text,
+        low_stim=low_stim,
     )
-
-    user_prompt = build_cu2_user_prompt(user_query=user_query, context_text=context_text)
 
     answer_text, prompt_tokens, completion_tokens = generate_llm_answer(
         system_prompt=SYSTEM_PROMPT_STUDENT,
         user_prompt=user_prompt,
-        max_new_tokens=600,
+        max_new_tokens=450,
         temperature=0.6,
     )
+
+    # 4) Fuentes
+    sources_block = build_sources_block_from_snippets(snippets)
+    if sources_block:
+        answer_text = answer_text.rstrip() + "\n\n" + sources_block
 
     llm_meta = {
         "llm_model": LLM_MODEL_NAME,
         "llm_prompt_tokens": prompt_tokens,
         "llm_completion_tokens": completion_tokens,
     }
-
-    return answer_text, llm_meta
+    return answer_text.strip(), llm_meta

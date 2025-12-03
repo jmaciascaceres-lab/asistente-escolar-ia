@@ -28,6 +28,11 @@ Servicios principales:
   
 Para levantar los servicios: `docker compose up --build` y el bot desde el archivo `telegram_bot.py` (ruta /backend/telegram_bot.py), mediante la sentencia `python telegram_bot.py`.
 
+El sistema utiliza una arquitectura híbrida:
+- RAG: embeddings con `all-MiniLM-L6-v2` y búsqueda en `PostgreSQL + pgvector` sobre documentos curriculares y de inclusión (MINEDUC, UNESCO, PAEC, etc.).
+- LLM externo: generación de respuestas con `Gemini` (GEMINI_MODEL_NAME, por defecto `gemini-2.0-flash`), invocado desde `llm_client.py`.
+- Todas las respuestas de los casos de uso `/explicar`, `/resumen`, `/quiz` y `/adaptar` combinan RAG + LLM y añaden un bloque de "Fuentes consultadas (no exhaustivas)" basado en los documentos recuperados.
+
 Flujo simplificado: 
 
 ```
@@ -423,6 +428,26 @@ GROUP BY role, command
 ORDER BY role, command;
 
 ```
+
+## Variables de entorno:
+
+### LLM (Gemini)
+
+- `GOOGLE_API_KEY` (obligatoria): clave de la Gemini API.
+- `GEMINI_MODEL_NAME` (opcional): nombre del modelo, por defecto `gemini-2.0-flash`.
+
+### Telegram
+
+- `TELEGRAM_BOT_TOKEN`: token del bot.
+- `BACKEND_URL`: URL del endpoint `/api/v1/messages` (por defecto `http://backend:8000/api/v1/messages` en Docker).
+
+### PostgreSQL
+
+- `DB_HOST`: host del servidor de base de datos.
+- `DB_PORT`: puerto del servidor de base de datos.
+- `DB_NAME`: nombre de la base de datos.
+- `DB_USER`: usuario de la base de datos.
+- `DB_PASSWORD`: contraseña de la base de datos.
 
 ## Referencias
 

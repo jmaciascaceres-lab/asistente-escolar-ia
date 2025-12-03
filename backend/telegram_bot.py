@@ -29,12 +29,17 @@ def get_updates(offset=None):
     return data.get("result", [])
 
 
-def send_message(chat_id: int, text: str):
-    requests.post(
-        f"{BASE_URL}/sendMessage",
-        json={"chat_id": chat_id, "text": text},
-        timeout=15,
-    )
+def send_message(chat_id: int, text: str) -> dict:
+    payload = {
+        "chat_id": chat_id,
+        "text": text,
+    }
+    resp = requests.post(f"{BASE_URL}/sendMessage", json=payload)
+    data = resp.json()
+    if not data.get("ok"):
+        print("Error al enviar mensaje:", data)
+    return data
+
 
 user_roles: Dict[int, str] = {}  # telegram_id -> role ("student", "teacher", etc.)
 
@@ -395,7 +400,7 @@ def main():
                     send_message(chat_id, f"La alerta {alert_id} ha sido marcada como resuelta.")
                     continue
 
-                # --- resto de mensajes: van al backend /api/v1/messages ---
+                 # --- resto de mensajes: van al backend /api/v1/messages ---
                 role = user_roles.get(from_id, "student")
 
                 settings = {}
@@ -405,19 +410,34 @@ def main():
                     settings["experiment_tag"] = EXPERIMENT_TAG_DOCENTES
                     settings["extra"] = {**EXTRA_BASE_DOCENTES}
 
+                # Comando principal (si parte con "/")
+                command = text.split()[0] if text.startswith("/") else None
+
+                # 1) Mensaje preliminar para comandos "pesados" (usan RAG + LLM)
+                heavy_commands = {"/explicar", "/quiz", "/adaptar", "/resumen", "/fuente"}
+                if command in heavy_commands:
+                    send_message(
+                        chat_id,
+                        "Estoy procesando tu solicitud, dame unos segundos..."
+                    )
+
                 backend_payload = {
                     "telegram_id": from_id,
                     "role": role,
-                    "command": text.split()[0] if text.startswith("/") else None,
+                    "command": command,
                     "text": text,
                     "course_id": None,
                     "settings": settings,
                 }
 
+                # 2) Medir tiempo de respuesta total (bot → backend → bot)
+                t0 = time.time()
                 try:
                     resp = requests.post(
-                        BACKEND_URL, json=backend_payload, timeout=30
+                        BACKEND_URL, json=backend_payload, timeout=60
                     )
+                    elapsed = time.time() - t0
+
                     if resp.status_code == 200:
                         data = resp.json()
                         reply_text = data.get(
@@ -427,10 +447,15 @@ def main():
                     else:
                         reply_text = "No pude conectar con el backend (error de servidor)."
                 except Exception as e:
+                    elapsed = time.time() - t0
                     print("Error llamando al backend:", e)
                     reply_text = "No pude conectar con el backend en este momento."
 
+                # 3) Añadir tiempo de respuesta al final del mensaje
+                reply_text += f"\n\nTiempo de respuesta del asistente: {elapsed:.1f} segundos."
+
                 send_message(chat_id, reply_text)
+
 
         except Exception as e:
             print("Error en el polling:", e)
