@@ -9,7 +9,7 @@ from google.genai import types
 #    Usa GOOGLE_API_KEY o GEMINI_API_KEY (la librería los detecta).
 _client = None
 
-LLM_MODEL_NAME = os.getenv("GEMINI_MODEL_NAME", "gemini-2.5-flash")
+LLM_MODEL_NAME = os.getenv("GEMINI_MODEL_NAME", "gemini-1.5-flash")
 
 
 def _get_client() -> genai.Client:
@@ -51,7 +51,7 @@ def generate_llm_answer(
     )
 
     print(f"DEBUG: LLM Model: {LLM_MODEL_NAME}")
-    # print(f"DEBUG: Response object: {response}") # Commented out to reduce noise
+    print(f"DEBUG: Response object: {response}")
 
     # Texto generado: Intentamos obtener .text, si falla, buscamos en parts
     answer_text = ""
