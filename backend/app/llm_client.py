@@ -56,7 +56,8 @@ def generate_llm_answer(
     # Texto generado: Intentamos obtener .text, si falla, buscamos en parts
     answer_text = ""
     if response.text:
-        answer_text = response.text.strip()
+        answer_text = (response.text or "").strip()
+        answer_text = answer_text.replace("**", "")
     else:
         # Fallback para cuando .text es None (ej: finish_reason=MAX_TOKENS o safety)
         try:
@@ -66,6 +67,7 @@ def generate_llm_answer(
                     if part.text:
                         parts_text.append(part.text)
                 answer_text = "".join(parts_text).strip()
+                answer_text = answer_text.replace("**", "")
                 print(f"DEBUG: Extracted text from parts: {answer_text[:100]}...")
         except Exception as e:
              print(f"DEBUG: Error extracting from parts: {e}")
