@@ -390,27 +390,26 @@ def handle_safety_and_alerts(conn, user_id: int, msg: MessageIn) -> Tuple[bool, 
 
     return True, reply
 
-def infer_case_id(role: UserRole, command: Optional[str]) -> Optional[str]:
+
+def infer_case_id(role: UserRole, command: str) -> Optional[str]:
     """
     Mapea (rol, comando) al case_id (CU1..CU8).
-    Ahora acepta command = None y permite que docentes/coordinadores
-    usen también /explicar (CU2).
+    Por ahora consideramos sólo los comandos principales.
     """
-    if not command:
-        return None
+    cmd = command.strip().lower() if command else ""
 
-    cmd = command.strip().lower()
-
-    # --- Estudiantes ---
     if role == UserRole.student:
         if cmd == "/tarea":
             return "CU1"
         if cmd == "/explicar":
             return "CU2"
+        # /recordatorio lo asociamos a CU1 (apoyo a planificación)
         if cmd == "/recordatorio":
             return "CU1"
+        # si quisieras, también podrías permitir /reporte_semana aquí:
+        # if cmd == "/reporte_semana":
+        #     return "CU6"
 
-    # --- Docentes y coordinadores (uso "pro" de comandos) ---
     if role in (UserRole.teacher, UserRole.coordinator):
         if cmd == "/fuente":
             return "CU7"
@@ -420,11 +419,9 @@ def infer_case_id(role: UserRole, command: Optional[str]) -> Optional[str]:
             return "CU4"
         if cmd == "/adaptar":
             return "CU5"
-        # 👇 nuevo: permitir /explicar para docentes/coordinadores
-        if cmd == "/explicar":
-            return "CU2"
+        if cmd == "/reporte_semana":
+            return "CU6"
 
-    # --- Madres/padres/apoderados ---
     if role == UserRole.caregiver:
         if cmd == "/reporte_semana":
             return "CU6"
@@ -433,10 +430,12 @@ def infer_case_id(role: UserRole, command: Optional[str]) -> Optional[str]:
         if cmd == "/apoyo":
             return "CU6"
 
-    # --- Comandos especiales solo coordinador ---
     if role == UserRole.coordinator:
         if cmd == "/alertas":
             return "CU8"
+        if cmd == "/alerta_ayuda":
+            return "CU8"
+
 
     # comandos genéricos (/start, /ayuda, etc.) o no mapeados
     return None
@@ -743,6 +742,67 @@ def generate_cu3_summary(msg: MessageIn) -> str:
 
     return intro + "\n".join(lines) + cierre
 
+
+def generate_cu3_pie_for_caregiver(msg: MessageIn) -> str:
+    """
+    Versión de CU3 pensada para madres/padres/apoderados cuando usan /pie.
+    Explica PIE e inclusión en lenguaje simple y cita 1 documento relevante.
+    """
+    query = extract_pie_query(msg)
+
+    # Buscamos fragmentos normativos o de inclusión.
+    preferred_types = ["normativa_nacional", "inclusion_autismo", "paec"]
+    snippets = []
+    for t in preferred_types:
+        snippets = search_snippets(query, filters={"doc_type": t}, k=1)
+        if snippets:
+            break
+    if not snippets:
+        snippets = search_snippets("Programa de Integración Escolar", filters={}, k=1)
+
+    intro = (
+        "Te respondo de forma general sobre el Programa de Integración Escolar (PIE) "
+        "y la inclusión educativa.\n\n"
+        "De manera sencilla, el PIE es un conjunto de apoyos que ofrece el colegio "
+        "para que estudiantes con ciertas necesidades educativas reciban ayudas "
+        "adicionales en su aprendizaje y participación.\n\n"
+        "Algunas ideas clave:\n"
+        "1) El objetivo es que tu hijo o hija pueda aprender y participar junto a su curso.\n"
+        "2) Los apoyos pueden ser horas de profesionales, adaptaciones en actividades "
+        "o materiales más accesibles.\n"
+        "3) Las decisiones se toman en conjunto entre familia, escuela y profesionales.\n"
+    )
+
+    ref_lines = ""
+    if snippets:
+        sn = snippets[0]
+        title = sn["title"]
+        source = sn.get("source") or "fuente interna"
+        content = sn["content"].replace("\n", " ")
+        preview = content[:260] + ("..." if len(content) > 260 else "")
+        ref_lines = (
+            "\nUn documento de referencia donde se habla de este tema es:\n"
+            f"- «{title}» ({source}).\n"
+            f"En uno de sus fragmentos se señala, en resumen: {preview}\n"
+        )
+    else:
+        ref_lines = (
+            "\nNo encontré en este momento un fragmento específico en los documentos cargados, "
+            "pero el colegio debería tener a disposición el Proyecto de Integración Escolar y "
+            "su reglamento interno, donde se explican los apoyos disponibles."
+        )
+
+    cierre = (
+        "\nTe recomiendo:\n"
+        "• Pedir una reunión con el profesor jefe o con el equipo PIE para conversar tu caso.\n"
+        "• Solicitar que te expliquen qué apoyos concretos se están ofreciendo y cómo se evalúan.\n\n"
+        "Este mensaje es solo una orientación general y no reemplaza la comunicación directa con el colegio "
+        "ni con profesionales de salud o educación."
+    )
+
+    return intro + ref_lines + cierre
+
+
 def generate_cu4_quiz(msg: MessageIn) -> str:
     """
     Genera un set de preguntas de evaluación formativa (CU4) a partir de un tema.
@@ -1039,6 +1099,75 @@ def generate_cu6_report(msg: MessageIn) -> str:
     return "\n".join(lines)
 
 
+def generate_cu6_apoyo_for_caregiver(msg: MessageIn) -> str:
+    """
+    CU6 para apoderados cuando usan /apoyo:
+    orientaciones breves para acompañar el estudio y el bienestar.
+    No entrega diagnósticos ni indicaciones clínicas.
+    """
+    situation = extract_apoyo_situation(msg)
+    t = situation.lower()
+
+    # Clasificación muy simple de tipo de consulta
+    if any(w in t for w in ["prueba", "tarea", "estudi", "nota", "deber"]):
+        tipo = "academico"
+    elif any(w in t for w in ["triste", "ansioso", "ansiosa", "enojado", "enojada",
+                              "no quiere ir al colegio", "no quiere ir a la escuela",
+                              "no quiere ir al liceo"]):
+        tipo = "emocional"
+    else:
+        tipo = "general"
+
+    header = "Gracias por compartir la situación. Te propongo algunas orientaciones generales:\n\n"
+
+    if tipo == "academico":
+        cuerpo = (
+            "1) Escuchar primero: pregúntale con calma qué es lo que más le cuesta de la asignatura o de la tarea.\n"
+            "2) Ayudar a organizar: dividir el estudio en bloques cortos (15–20 minutos) con pequeñas pausas.\n"
+            "3) Revisar indicaciones del colegio: mirar la guía, pauta o rúbrica que haya enviado la profesora o el profesor.\n"
+            "4) Mantener comunicación: si las dificultades se repiten, pedir una reunión breve con el docente para coordinar apoyos.\n"
+        )
+    elif tipo == "emocional":
+        cuerpo = (
+            "1) Validar lo que siente: escuchar sin minimizar (“no es nada”) ni juzgar.\n"
+            "2) Preguntar con calma: qué cosas han pasado en el curso o en el colegio que le preocupan.\n"
+            "3) Acordar pasos concretos: por ejemplo, hablar con el profesor jefe o con convivencia escolar.\n"
+            "4) Estar atento a señales de mayor preocupación: cambios bruscos de ánimo, aislamiento extremo u otras conductas inusuales.\n"
+        )
+    else:
+        cuerpo = (
+            "1) Conversar en un momento tranquilo sobre lo que está pasando.\n"
+            "2) Identificar si la dificultad es más académica, social o emocional.\n"
+            "3) Revisar las comunicaciones del colegio (agenda, correos, circulares) por si ya hay información o apoyos ofrecidos.\n"
+            "4) Coordinar una reunión corta con el curso o con el equipo PIE si lo consideras necesario.\n"
+        )
+
+    # Buscamos al menos un documento de convivencia/inclusión para citar.
+    snippets = search_snippets("convivencia escolar", filters={"doc_type": "normativa_nacional"}, k=1)
+    if not snippets:
+        snippets = search_snippets("bienestar estudiantil", filters={}, k=1)
+
+    ref_lines = ""
+    if snippets:
+        sn = snippets[0]
+        title = sn["title"]
+        source = sn.get("source") or "fuente interna"
+        ref_lines = (
+            "\nEn los documentos del colegio se mencionan lineamientos de apoyo. "
+            f"Por ejemplo, en «{title}» ({source}) se entregan orientaciones para abordar "
+            "situaciones de bienestar y convivencia."
+        )
+
+    cierre = (
+        "\n\nMuy importante:\n"
+        "• Este mensaje es solo una guía general y no reemplaza la orientación profesional.\n"
+        "• Si notas señales graves (ideas de hacerse daño, amenazas de violencia u otras conductas muy preocupantes), "
+        "es fundamental seguir los protocolos del colegio y, si corresponde, consultar con servicios de salud o líneas de ayuda oficiales."
+    )
+
+    return header + cuerpo + ref_lines + cierre
+
+
 def generate_reply_stub(msg: MessageIn, case_id: Optional[str]):
     """
     Por ahora, genera textos simples según case_id para probar el flujo.
@@ -1065,10 +1194,15 @@ def generate_reply_stub(msg: MessageIn, case_id: Optional[str]):
     elif case_id == "CU3":
         used_rag = True
         used_cag = True
-        reply_text, llm_meta = resumen_con_llm(msg)
-        llm_model = llm_meta["llm_model"]
-        llm_prompt_tokens = llm_meta["llm_prompt_tokens"]
-        llm_completion_tokens = llm_meta["llm_completion_tokens"]
+        if msg.role == UserRole.caregiver and msg.command == "/pie":
+            # Versión simple para familias, sin LLM (o con LLM más adelante)
+            reply_text = generate_cu3_pie_for_caregiver(msg)
+        else:
+            # Resumen para docentes/coord. u otros roles
+            reply_text, llm_meta = resumen_con_llm(msg)
+            llm_model = llm_meta["llm_model"]
+            llm_prompt_tokens = llm_meta["llm_prompt_tokens"]
+            llm_completion_tokens = llm_meta["llm_completion_tokens"]
     elif case_id == "CU4":
         used_rag = True
         used_cag = True
@@ -1084,18 +1218,22 @@ def generate_reply_stub(msg: MessageIn, case_id: Optional[str]):
         llm_prompt_tokens = llm_meta["llm_prompt_tokens"]
         llm_completion_tokens = llm_meta["llm_completion_tokens"]
     elif case_id == "CU6":
-        used_cag = True
-        reply_text = generate_cu6_report(msg)
+        if msg.command == "/reporte_semana":
+            used_cag = True
+            reply_text = generate_cu6_report(msg)
+        elif msg.command == "/apoyo" and msg.role == UserRole.caregiver:
+            used_rag = True
+            used_cag = True
+            reply_text = generate_cu6_apoyo_for_caregiver(msg)
     elif case_id == "CU7":
         used_rag = True
         used_cag = True
         reply_text = generate_cu7_response(msg)
     elif case_id == "CU8":
-        # Teacher-in-the-loop; en el futuro activará alertas
-        sensitive_flag = False  # aquí luego se pondrá True cuando se detecte algo sensible
-        reply_text = (
-            "CU8 (teacher-in-the-loop / alertas). Listaré o gestionaré alertas. [placeholder]"
-        )
+        used_rag = True
+        used_cag = True
+        sensitive_flag = False
+        reply_text = generate_cu8_alert_guidance(msg)
 
     else:
         # Mensaje especial si un rol no autorizado usa /fuente
@@ -1184,6 +1322,94 @@ def generate_cu7_response(msg: MessageIn) -> str:
         )
 
     return intro + "\n".join(lines) + cierre
+
+
+def extract_alert_id_from_text(text: str, base_cmd: str) -> Optional[int]:
+    parts = text.strip().split(maxsplit=1)
+    if len(parts) < 2:
+        return None
+    try:
+        return int(parts[1].strip())
+    except ValueError:
+        return None
+
+
+def generate_cu8_alert_guidance(msg: MessageIn) -> str:
+    """
+    CU8 conversacional: orientaciones iniciales para coordinadores
+    sobre una alerta concreta (/alerta_ayuda ID).
+    No reemplaza protocolos internos ni indicaciones profesionales.
+    """
+    if msg.role != UserRole.coordinator:
+        return (
+            "El comando /alerta_ayuda está pensado para coordinadores o equipos de convivencia. "
+            "Si tienes dudas sobre una situación específica, conversa con el equipo del establecimiento."
+        )
+
+    alert_id = extract_alert_id_from_text(msg.text, "/alerta_ayuda")
+    if alert_id is None:
+        return "Uso esperado: /alerta_ayuda ID (por ejemplo, /alerta_ayuda 3)."
+
+    # 1) Traemos la alerta desde la BD
+    with get_db() as conn:
+        with conn.cursor() as cur:
+            cur.execute(
+                """
+                SELECT id, created_at, student_id, course_id, alert_type, status, summary, last_update
+                FROM teacher_alerts
+                WHERE id = %s;
+                """,
+                (alert_id,),
+            )
+            row = cur.fetchone()
+
+    if not row:
+        return f"No encontré la alerta con ID {alert_id}. Verifica el número e inténtalo nuevamente."
+
+    _id, created_at, student_id, course_id, alert_type, status, summary, last_update = row
+
+    header = (
+        f"Orientaciones iniciales para revisar la alerta ID {_id}.\n\n"
+        f"- Tipo de alerta: {alert_type}\n"
+        f"- Estado actual: {status}\n"
+        f"- Curso_id (si existe): {course_id}\n"
+        f"- Fecha de creación: {created_at.strftime('%Y-%m-%d %H:%M')}\n\n"
+        "Resumen del mensaje del estudiante (extracto tal como fue registrado):\n"
+        f"{summary[:400]}{'...' if len(summary) > 400 else ''}\n\n"
+        "Sugerencias generales para el equipo (no son un protocolo oficial):\n"
+        "1) Revisar el contexto: contrastar este mensaje con la información que tengan del curso y del estudiante.\n"
+        "2) Acordar quién toma contacto: definir quién del equipo (profesor jefe, orientador, psicólogo/a) conversará primero con el estudiante.\n"
+        "3) Registrar la conversación y los acuerdos de manera breve y respetuosa.\n"
+        "4) Valorar si es necesario informar a la familia y cómo hacerlo de forma cuidadosa.\n"
+    )
+
+    # 2) Referencias normativas rápidas
+    snippets = search_snippets(alert_type or "convivencia escolar",
+                               filters={"doc_type": "normativa_nacional"},
+                               k=2)
+    if not snippets:
+        snippets = search_snippets("convivencia escolar", filters={}, k=2)
+
+    ref_lines = ""
+    if snippets:
+        ref_lines = "\nAlgunos documentos relacionados que pueden ayudar a revisar el caso:\n"
+        for sn in snippets:
+            title = sn["title"]
+            source = sn.get("source") or "fuente interna"
+            doc_type = sn.get("doc_type") or ""
+            ref_lines += f"- «{title}» ({source}, tipo: {doc_type}).\n"
+
+    cierre = (
+        "\nRecuerda:\n"
+        "• Estas orientaciones son solo un apoyo inicial para ordenar la conversación interna.\n"
+        "• Las decisiones deben alinearse con los protocolos de convivencia y de resguardo del colegio.\n"
+        "• Si se identifican riesgos altos para la integridad del estudiante u otras personas, "
+        "es fundamental activar de inmediato los protocolos de protección y, si corresponde, "
+        "derivar a redes de salud o protección especializadas."
+    )
+
+    return header + ref_lines + cierre
+
 
 def detect_sensitive_categories(text: str) -> list[str]:
     """
@@ -1387,6 +1613,20 @@ def extract_adapt_request(msg: MessageIn) -> str:
         rest = text[len("/adaptar"):].strip()
         return rest or "esta actividad"
     return text or "esta actividad"
+
+def extract_pie_query(msg: MessageIn) -> str:
+    text = msg.text.strip()
+    if text.startswith("/pie"):
+        rest = text[len("/pie"):].strip()
+        return rest or "Programa de Integración Escolar (PIE)"
+    return text or "Programa de Integración Escolar (PIE)"
+
+def extract_apoyo_situation(msg: MessageIn) -> str:
+    text = msg.text.strip()
+    if text.startswith("/apoyo"):
+        rest = text[len("/apoyo"):].strip()
+        return rest or "la situación que describes"
+    return text or "la situación que describes"
 
 
 

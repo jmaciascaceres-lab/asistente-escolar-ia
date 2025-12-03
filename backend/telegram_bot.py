@@ -113,7 +113,10 @@ def get_help_message_for_role(role: str) -> str:
             "  Ej: /quiz ciclo del agua 6° básico\n\n"
             "• /adaptar + descripción de actividad\n"
             "  Proponer adaptaciones y apoyos DUA.\n"
-            "  Ej: /adaptar Prueba escrita de historia para 8° básico con estudiante con TDAH\n"
+            "  Ej: /adaptar Prueba escrita de historia para 8° básico con estudiante con TDAH\n\n"
+            "• /reporte_semana\n"
+            "  Ver un resumen de cómo has usado el asistente en los últimos 7 días "
+            "(comandos más usados y recordatorios).\n"
         )
 
     if role == "caregiver":
@@ -123,10 +126,10 @@ def get_help_message_for_role(role: str) -> str:
             "  Explicaciones simples sobre PIE, inclusión educativa, etc.\n\n"
             "• /apoyo + situación\n"
             "  Orientaciones breves para acompañar el estudio y el bienestar.\n\n"
-            "Más adelante:\n"
             "• /reporte_semana\n"
-            "  Ver un resumen simple del uso académico del asistente por parte de tu hijo/a "
-            "(cuando esta función esté activa y autorizada)."
+            "  Ver un resumen simple del uso de este chat en los últimos 7 días.\n"
+            "  Más adelante, si el colegio lo autoriza, se podrá vincular al uso académico "
+            "del asistente por parte de tu hijo o hija.\n"
         )
 
     if role == "coordinator":
@@ -140,6 +143,8 @@ def get_help_message_for_role(role: str) -> str:
             "  Busca fragmentos normativos o lineamientos relevantes.\n\n"
             "• /resumen + tema\n"
             "  Pre-resumen de documentos para preparar reuniones o planes de apoyo."
+            "• /alerta_ayuda ID\n"
+            "  Entrega orientaciones generales para que el equipo revise una alerta concreta.\n\n"
         )
 
     # Estudiante por defecto
