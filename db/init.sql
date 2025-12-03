@@ -130,3 +130,8 @@ CREATE INDEX IF NOT EXISTS idx_interaction_logs_user
 
 CREATE INDEX IF NOT EXISTS idx_interaction_logs_course
   ON interaction_logs (course_id);
+
+-- Datos iniciales (Seed)
+INSERT INTO courses (id, code, name, level) 
+VALUES (1, '8B', 'Octavo Básico B', '8_basico')
+ON CONFLICT (id) DO NOTHING;

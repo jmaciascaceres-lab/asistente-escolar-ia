@@ -1,68 +1,89 @@
 # backend/app/llm_client.py
 import os
-import torch
-from transformers import AutoModelForCausalLM, AutoTokenizer
+from typing import Tuple
 
-GRANITE_MODEL_NAME = os.getenv("GRANITE_MODEL_PATH", "ibm-granite/granite-4.0-h-1b")
+from google import genai
+from google.genai import types
 
-_model = None
-_tokenizer = None
-_device = "cuda" if torch.cuda.is_available() else "cpu"
+# 1) Configurar cliente Gemini
+#    Usa GOOGLE_API_KEY o GEMINI_API_KEY (la librería los detecta).
+_client = None
+
+LLM_MODEL_NAME = os.getenv("GEMINI_MODEL_NAME", "gemini-2.5-flash")
 
 
-def _get_model_and_tokenizer():
-    global _model, _tokenizer
-    if _model is None or _tokenizer is None:
-        _tokenizer = AutoTokenizer.from_pretrained(GRANITE_MODEL_NAME)
-        _model = AutoModelForCausalLM.from_pretrained(GRANITE_MODEL_NAME)
-        _model.to(_device)
-        _model.eval()
-    return _model, _tokenizer
+def _get_client() -> genai.Client:
+    global _client
+    if _client is None:
+        # Si usas Gemini Developer API (no Vertex):
+        _client = genai.Client(
+            api_key=os.getenv("GOOGLE_API_KEY") or os.getenv("GEMINI_API_KEY")
+        )
+    return _client
 
 
 def generate_llm_answer(
     system_prompt: str,
     user_prompt: str,
-    max_new_tokens: int = 512,
-    temperature: float = 0.6,
-):
+    max_new_tokens: int = 8192,
+    temperature: float = 0.7,
+) -> Tuple[str, int, int]:
     """
-    Devuelve:
+    Llama a Gemini y devuelve:
       - answer_text: str
-      - prompt_tokens: int
-      - completion_tokens: int
+      - prompt_tokens: int (aprox)
+      - completion_tokens: int (aprox)
     """
-    model, tokenizer = _get_model_and_tokenizer()
+    client = _get_client()
 
-    messages = [
-        {"role": "system", "content": system_prompt},
-        {"role": "user", "content": user_prompt},
-    ]
+    # Armamos un contenido tipo "chat" simple:
+    full_prompt = f"SYSTEM:\n{system_prompt}\n\nUSER:\n{user_prompt}"
 
-    chat_text = tokenizer.apply_chat_template(
-        messages,
-        tokenize=False,
-        add_generation_prompt=True,
+    config = types.GenerateContentConfig(
+        temperature=temperature,
+        max_output_tokens=max_new_tokens,
     )
 
-    inputs = tokenizer(chat_text, return_tensors="pt").to(_device)
+    response = client.models.generate_content(
+        model=LLM_MODEL_NAME,
+        contents=full_prompt,
+        config=config,
+    )
 
-    prompt_tokens = inputs["input_ids"].shape[1]
+    print(f"DEBUG: LLM Model: {LLM_MODEL_NAME}")
+    # print(f"DEBUG: Response object: {response}") # Commented out to reduce noise
 
-    with torch.no_grad():
-        output_ids = model.generate(
-            **inputs,
-            max_new_tokens=max_new_tokens,
-            do_sample=True,
-            temperature=temperature,
-            pad_token_id=tokenizer.eos_token_id,
+    # Texto generado: Intentamos obtener .text, si falla, buscamos en parts
+    answer_text = ""
+    if response.text:
+        answer_text = response.text.strip()
+    else:
+        # Fallback para cuando .text es None (ej: finish_reason=MAX_TOKENS o safety)
+        try:
+            if response.candidates and response.candidates[0].content.parts:
+                parts_text = []
+                for part in response.candidates[0].content.parts:
+                    if part.text:
+                        parts_text.append(part.text)
+                answer_text = "".join(parts_text).strip()
+                print(f"DEBUG: Extracted text from parts: {answer_text[:100]}...")
+        except Exception as e:
+             print(f"DEBUG: Error extracting from parts: {e}")
+
+    if not answer_text:
+         print("DEBUG: WARNING - Resulting answer_text is empty.")
+
+    # Tokens: usamos usage_metadata si está disponible
+    prompt_tokens = None
+    completion_tokens = None
+    usage = getattr(response, "usage_metadata", None)
+    if usage is not None:
+        # Los nombres pueden variar según versión; probamos ambos estilos
+        prompt_tokens = getattr(usage, "prompt_token_count", None) or getattr(
+            usage, "promptTokenCount", None
+        )
+        completion_tokens = getattr(usage, "candidates_token_count", None) or getattr(
+            usage, "candidatesTokenCount", None
         )
 
-    total_tokens = output_ids.shape[1]
-    completion_tokens = total_tokens - prompt_tokens
-
-    # Recortar solo la salida nueva
-    generated_ids = output_ids[0, prompt_tokens:]
-    answer_text = tokenizer.decode(generated_ids, skip_special_tokens=True).strip()
-
-    return answer_text, prompt_tokens, completion_tokens
+    return answer_text, prompt_tokens or 0, completion_tokens or 0

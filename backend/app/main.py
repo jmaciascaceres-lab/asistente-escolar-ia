@@ -20,6 +20,16 @@ from fastapi import HTTPException
 
 app = FastAPI(title="Asistente Escolar IA", version="0.1.0")
 
+from fastapi.middleware.cors import CORSMiddleware
+
+app.add_middleware(
+    CORSMiddleware,
+    allow_origins=["*"],
+    allow_credentials=True,
+    allow_methods=["*"],
+    allow_headers=["*"],
+)
+
 
 # ---------- Eventos de ciclo de vida ----------
 
@@ -180,13 +190,16 @@ async def handle_message(msg: MessageIn):
     case_id = infer_case_id(msg.role, msg.command)
 
     # Placeholder de lógica: genera respuesta básica según CU
-    reply_text,
-    used_rag,
-    used_cag,
-    sensitive_flag,
-    llm_model,
-    llm_prompt_tokens,
-    llm_completion_tokens = generate_reply_stub(msg, case_id)
+    stub_result = generate_reply_stub(msg, case_id)
+    (
+        reply_text,
+        used_rag,
+        used_cag,
+        sensitive_flag,
+        llm_model,
+        llm_prompt_tokens,
+        llm_completion_tokens
+    ) = stub_result
 
     latency_ms = int((time.time() - start) * 1000)
 

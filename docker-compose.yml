@@ -23,6 +23,7 @@ services:
       - ./backend/.env
     environment:
       - DATABASE_URL=postgresql://postgres:postgres@db:5432/asistente_escolar_ia
+      - GEMINI_MODEL_NAME=gemini-2.5-flash
     depends_on:
       - db
     ports:

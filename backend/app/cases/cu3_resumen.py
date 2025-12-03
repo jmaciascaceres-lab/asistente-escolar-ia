@@ -2,7 +2,7 @@
 from typing import Tuple
 
 from ..rag_service import search_snippets
-from ..llm_client import generate_llm_answer, GRANITE_MODEL_NAME
+from ..llm_client import generate_llm_answer, LLM_MODEL_NAME
 from ..llm_prompts import SYSTEM_PROMPT_TEACHER, build_cu3_user_prompt
 
 
@@ -59,7 +59,7 @@ def resumen_con_llm(msg) -> Tuple[str, dict]:
 
     # 5) Metadatos LLM
     llm_meta = {
-        "llm_model": GRANITE_MODEL_NAME,
+        "llm_model": LLM_MODEL_NAME,
         "llm_prompt_tokens": prompt_tokens,
         "llm_completion_tokens": completion_tokens,
     }
