@@ -1,12 +1,12 @@
 # Asistente Escolar IA
 
-Asistente Escolar IA es un prototipo de asistente conversacional con enfoque de **inclusión educativa** para contexto escolar chileno.  
-Integra:
+Asistente Escolar IA es un prototipo de asistente conversacional con enfoque de inclusión educativa para contexto escolar chileno. Integra:
 
-- Un **bot de Telegram** para interacción con estudiantes, docentes, apoderados y equipos de convivencia.
-- Un backend **FastAPI** con lógica de casos de uso (CU1–CU8).
-- Un módulo **RAG** (Retrieval-Augmented Generation) sobre documentos MINEDUC / UNESCO / inclusión.
-- Una base de datos **PostgreSQL** para usuarios, interacciones y documentos.
+- Un bot de Telegram para interacción con estudiantes, docentes, apoderados y equipos de convivencia.
+- Un backend FastAPI con lógica de casos de uso (CU1–CU8).
+- Un módulo RAG (Retrieval-Augmented Generation) sobre documentos MINEDUC / UNESCO / inclusión.
+- Una base de datos PostgreSQL para usuarios, interacciones y documentos.
+- Un LLM externo (Gemini) para generación de texto controlada.
 
 > Proyecto en fase de investigación/piloto. No reemplaza atención clínica ni protocolos formales de los establecimientos.
 
@@ -25,13 +25,16 @@ Servicios principales:
   - Cliente web para la BD: `http://localhost:8080`
 - **telegram_bot**  
   - Proceso Python que hace *long polling* a Telegram y habla con el backend vía HTTP.
-  
-Para levantar los servicios: `docker compose up --build` y el bot desde el archivo `telegram_bot.py` (ruta /backend/telegram_bot.py), mediante la sentencia `python telegram_bot.py`.
 
-El sistema utiliza una arquitectura híbrida:
-- RAG: embeddings con `all-MiniLM-L6-v2` y búsqueda en `PostgreSQL + pgvector` sobre documentos curriculares y de inclusión (MINEDUC, UNESCO, PAEC, etc.).
-- LLM externo: generación de respuestas con `Gemini` (GEMINI_MODEL_NAME, por defecto `gemini-2.0-flash`), invocado desde `llm_client.py`.
-- Todas las respuestas de los casos de uso `/explicar`, `/resumen`, `/quiz` y `/adaptar` combinan RAG + LLM y añaden un bloque de "Fuentes consultadas (no exhaustivas)" basado en los documentos recuperados.
+```
+# desde la raíz del repo
+docker compose up --build   # levanta backend + db + adminer
+
+# en otra terminal, dentro de backend/
+cd backend
+python telegram_bot.py      # inicia el bot de Telegram
+
+```
 
 Flujo simplificado: 
 
@@ -39,18 +42,41 @@ Flujo simplificado:
 Usuario (Telegram)
       │
       ▼
-Bot de Telegram  ──►  FastAPI (/api/v1/messages, /api/v1/rag/search, /api/v1/alerts/…)
-      │                                 │
-      │                                 ▼
-      └──────────────────────────►  PostgreSQL
-                                     • users
-                                     • interaction_logs
-                                     • documents / document_chunks
-                                     • reminders
-                                     • teacher_alerts
-
-
+Bot de Telegram ──► FastAPI (/api/v1/messages, /api/v1/rag/search, /api/v1/alerts/…)
+      │                                │
+      │                                ├──► RAG (search_documents / search_snippets)
+      │                                │
+      │                                └──► PostgreSQL
+      │                                     • users
+      │                                     • interaction_logs
+      │                                     • documents / document_chunks
+      │                                     • reminders
+      │                                     • teacher_alerts
+      │
+      └───────────────◄────────── Respuesta de texto (sin Markdown)
 ```
+
+### Características técnicas:
+
+RAG
+- Embeddings con all-MiniLM-L6-v2 (dim=384, sentence-transformers).
+- Búsqueda vectorial en PostgreSQL usando pgvector.
+- Documentos: normativa MINEDUC, Ley de Autismo, DUA, PAEC, currículum, etc.
+
+LLM externo (Gemini)
+- Modelo configurable (por defecto gemini-2.0-flash).
+- Envoltura centralizada en llm_client.py.
+- Casos de uso que lo usan: /explicar, /resumen, /quiz, /adaptar.
+- System prompts diferenciados para estudiantes y docentes, y restricción explícita: no usar Markdown (para evitar **negritas** en Telegram).
+- Si la llamada al LLM falla, se devuelve un mensaje seguro:
+> "En este momento no puedo generar una respuesta, intenta de nuevo en unos minutos."
+y se registran llm_prompt_tokens = 0 y llm_completion_tokens = 0.
+
+Experiencia en Telegram
+- Al recibir un comando que va al backend, el bot envía primero:
+> "Estoy procesando tu solicitud, dame unos segundos..."
+- Al final de cada respuesta añade una línea con la latencia completa medida desde el bot:
+> "Tiempo de respuesta del asistente: X.Y segundos."
 
 ## 2. Estructura del proyecto
 
@@ -58,18 +84,23 @@ Bot de Telegram  ──►  FastAPI (/api/v1/messages, /api/v1/rag/search, /api/
 .
 ├── backend/
 │   ├── app/
-│   │   ├── main.py                # FastAPI, casos de uso, endpoints
-│   │   ├── db.py                  # Conexión a PostgreSQL
-│   │   ├── rag_service.py         # Ingesta + búsqueda de documentos (RAG)
-│   │   └── models.py / schemas.py # Pydantic, enums, etc. (según tu estructura)
+│   │   ├── main.py              # FastAPI, casos de uso, endpoints y logging
+│   │   ├── db.py                # Conexión a PostgreSQL (get_db, init_db, etc.)
+│   │   ├── rag_service.py       # Búsqueda/ingesta de documentos (RAG)
+│   │   ├── llm_client.py        # Cliente Gemini (LLM externo)
+│   │   └── cases/
+│   │       ├── cu2_explicar.py  # explicar_con_llm (CU2)
+│   │       ├── cu3_resumen.py   # resumen_con_llm (CU3)
+│   │       ├── cu4_quiz.py      # quiz_con_llm     (CU4)
+│   │       └── cu5_adaptar.py   # adaptar_con_llm  (CU5)
 │   ├── scripts/
-│   │   └── ingest_inclusion_batch.py  # Ingesta de PDFs MINEDUC/UNESCO
-│   ├── telegram_bot.py            # Bot Telegram (adapter)
+│   │   └── ingest_inclusion_batch.py  # Ingesta de PDFs MINEDUC/UNESCO/Ley de Autismo
+│   ├── telegram_bot.py          # Bot de Telegram (adapter)
 │   ├── Dockerfile
-│   └── .env.example / .env
+│   └── .env.example             # Ejemplo de configuración
 ├── db/
-│   ├── init.sql                   # Creación de tablas y tipos
-│   └── data/                      # Volumen de datos de Postgres
+│   ├── init.sql                 # Creación de tablas, tipos y extensiones (pgvector)
+│   └── data/                    # Volumen de datos de Postgres
 ├── docker-compose.yml
 └── README.md
 ```
@@ -88,292 +119,194 @@ Ejemplo:
 }
 ```
 
-### 3.2. Interacción con usuarios
+### 3.2. Mensajes desde el bot
 
-- POST /api/v1/messages (recibe un mensaje de Telegram y lo procesa)
+- POST /api/v1/messages (recibe un mensaje desde el bot de Telegram y devuelve una respuesta)
 
-Ejemplo:
+Endpoint central de orquestación:
+1. Upsert de usuario (users).
+2. Mapeo (rol, comando) → case_id (CU1…CU8).
+3. Generación de respuesta (RAG + LLM cuando aplica).
+4. Registro en interaction_logs.
 
+Request:
 ```
 {
   "telegram_id": 123456789,
-  "role": "student",
-  "command": "/tarea",
-  "text": "/tarea Estudiar para la prueba de fracciones del lunes",
+  "role": "teacher",
+  "command": "/quiz",
+  "text": "/quiz fracciones 6° básico",
   "course_id": null,
   "settings": {
-    "modo": "baja",
     "experiment_tag": "pilot_docentes_2025S1",
-    "extra": {"colegio": "Liceo X", "curso": "8B"}
+    "extra": {
+      "contexto": "taller_docentes",
+      "pais": "Chile"
+    }
   }
 }
 ```
 
-Respuesta esperada:
-
+Respuesta:
 ```
 {
-  "reply_text": "Plan sugerido...",
-  "case_id": "CU1",
-  "used_rag": false,
+  "reply_text": "Aquí hay algunas preguntas tipo quiz...",
+  "case_id": "CU4",
+  "used_rag": true,
   "used_cag": true,
   "sensitive_flag": false
 }
 ```
 
-Cada llamada se registra en la tabla `interaction_logs`.
+### 3.3. RAG
 
-### 3.3. Búsqueda de documentos
+- POST /api/v1/rag/ingest
+  Ingesta v0 de documentos (título + metadatos). Se usa principalmente desde scripts.
 
-- GET /api/v1/rag/search (realiza una búsqueda en los documentos ingestados)
+- POST /api/v1/rag/search
+  Búsqueda en documents (útil para pruebas directas del RAG).
 
-Ejemplo:
-
+Request:
 ```
 {
-  "query": "¿Qué es la inclusión educativa?",
-  "experiment_tag": "pilot_docentes_2025S1",
-  "extra": {"colegio": "Liceo X", "curso": "8B"}
+  "query": "ciclo del agua 5° básico",
+  "filters": {
+    "doc_type": "curriculo"
+  }
 }
 ```
 
-Respuesta esperada:
-
+Respuesta (RagSearchResult):
 ```
 {
-  "results": [
+  "query": "ciclo del agua 5° básico",
+  "documents": [
     {
-      "title": "Inclusión educativa",
-      "content": "La inclusión educativa es...",
-      "source": "https://www.mineduc.cl/...",
-      "score": 0.9
-    },
-    ...
+      "id": 42,
+      "title": "OF-CM Matematicas 5° Básico 2018",
+      "doc_type": "curriculo",
+      "source": "Carga Batch",
+      "subject": "Ciencias Naturales",
+      "year": 2018,
+      "metadata": {}
+    }
   ]
 }
 ```
 
-Cada búsqueda se registra en la tabla `rag_logs`.
+### 3.4. Gestión de roles de usuario
 
-### 3.4. Alertas
+- POST /api/v1/users/set_role
+  Se llama desde el bot cuando el usuario escribe /soy_docente, /soy_apoderado, etc.
 
-- GET /api/v1/alerts (obtiene alertas para un usuario)
-
-Ejemplo:
-
+Body:
 ```
 {
   "telegram_id": 123456789,
-  "role": "student",
-  "experiment_tag": "pilot_docentes_2025S1",
-  "extra": {"colegio": "Liceo X", "curso": "8B"}
+  "role": "teacher"
 }
 ```
 
-Respuesta esperada:
+### 3.5. Alertas para equipos de convivencia (CU8)
 
-```
-{
-  "results": [
-    {
-      "title": "Inclusión educativa",
-      "content": "La inclusión educativa es...",
-      "source": "https://www.mineduc.cl/...",
-      "score": 0.9
-    },
-    ...
-  ]
-}
-```
+Endpoints HTTP (usados por el bot):
 
-Cada búsqueda se registra en la tabla `rag_logs`.
+- GET `/api/v1/alerts?status=pending`
+  Lista las últimas alertas filtrando por estado (por defecto pending).
 
-- POST /api/v1/alerts (crea una alerta para un usuario)
+- GET `/api/v1/alerts/{alert_id}`
+  Obtiene el detalle de una alerta.
 
-Ejemplo:
+- POST `/api/v1/alerts/{alert_id}/status`
+  Actualiza el estado de una alerta (pending, in_review, resolved).
 
-```
-{
-  "telegram_id": 123456789,
-  "role": "student",
-  "experiment_tag": "pilot_docentes_2025S1",
-  "extra": {"colegio": "Liceo X", "curso": "8B"}
-}
-```
+Las alertas se crean automáticamente cuando el backend detecta texto sensible en mensajes de estudiantes (riesgo de autolesión, violencia familiar, posible abuso, acoso escolar, etc.).
 
-Respuesta esperada:
+Los mensajes de contención para estudiantes están diseñados para:
+- Validar que lo que cuenta es importante.
+- Derivar a un adulto responsable del colegio.
+- Recordar que el bot no es un canal de emergencia ni atención clínica.
 
-```
-{
-  "results": [
-    {
-      "title": "Inclusión educativa",
-      "content": "La inclusión educativa es...",
-      "source": "https://www.mineduc.cl/...",
-      "score": 0.9
-    },
-    ...
-  ]
-}
-```
+### 3.6. Comandos del bot de Telegram por rol
 
-- DELETE /api/v1/alerts (elimina una alerta para un usuario)
+El adapter telegram_bot.py mantiene en memoria un diccionario user_roles y sincroniza el rol en la tabla users.
 
-Ejemplo:
+#### 3.6.1. Selección de rol
 
-```
-{
-  "telegram_id": 123456789,
-  "role": "student",
-  "experiment_tag": "pilot_docentes_2025S1",
-  "extra": {"colegio": "Liceo X", "curso": "8B"}
-}
-```
+- `/soy_estudiante` → role = "student"
+- `/soy_docente` → role = "teacher"
+- `/soy_apoderado` → role = "caregiver"
+- `/soy_coordinador` o `/soy_coordinadora` → role = "coordinator"
 
-Respuesta esperada:
+#### 3.6.2. Comandos comunes
 
-```
-{
-  "results": [
-    {
-      "title": "Inclusión educativa",
-      "content": "La inclusión educativa es...",
-      "source": "https://www.mineduc.cl/...",
-      "score": 0.9
-    },
-    ...
-  ]
-}
-```
+- `/start` → mensaje de bienvenida adaptado al rol actual.
+- `/ayuda` → listado de comandos para el rol actual
 
-### 3.5. Recordatorios
+#### 3.6.3. Estudiantes (rol student)
 
-- GET /api/v1/reminders (obtiene recordatorios para un usuario)
+- `/tarea` + descripción → CU1
+Planificación de tareas y estudio.
 
-Ejemplo:
+Detecta si es:
+- tarea puntual,
+- preparación de prueba/control, o
+- plan semanal.
 
-```
-{
-  "telegram_id": 123456789,
-  "role": "student",
-  "experiment_tag": "pilot_docentes_2025S1",
-  "extra": {"colegio": "Liceo X", "curso": "8B"}
-}
-```
+- `/explicar` + tema → CU2
+Explicación guiada con andamiaje.
+- Plantillas específicas para: ciclo del agua, fotosíntesis.
+- Modos extra: “repaso rápido”, “con ejercicios/preguntas”.
+- Usa RAG + LLM y cita al final:
+> "Fuentes consultadas (no exhaustivas): …"
 
-Respuesta esperada:
+> Nota: en el piloto el foco está en docentes, pero estos comandos funcionan también para estudiantes
 
-```
-{
-  "results": [
-    {
-      "title": "Inclusión educativa",
-      "content": "La inclusión educativa es...",
-      "source": "https://www.mineduc.cl/...",
-      "score": 0.9
-    },
-    ...
-  ]
-}
-```
+#### 3.6.4. Docentes (rol teacher)
 
-- POST /api/v1/reminders (crea un recordatorio para un usuario)
+- `/fuente` + texto → CU7
+Búsqueda de fragmentos normativos / inclusión (RAG).
+Ejemplo: situaciones PIE, recreo complejos, ajustes razonables, etc.
 
-Ejemplo:
+- `/resumen` + tema → CU3
+Pre-resumen de snippets relevantes para preparar reuniones o clases.
+Usa RAG + LLM para condensar ideas clave y cita documentos al final.
 
-```
-{
-  "telegram_id": 123456789,
-  "role": "student",
-  "experiment_tag": "pilot_docentes_2025S1",
-  "extra": {"colegio": "Liceo X", "curso": "8B"}
-}
-```
+- `/quiz` + tema → CU4
+Generación de preguntas de evaluación formativa:
+- 3+ preguntas base (recuerdo, comprensión, aplicación).
+- Preguntas conectadas a documentos curriculares.
+- Usa RAG + LLM y termina con “Fuentes consultadas (no exhaustivas)…”.
 
-Respuesta esperada:
+- `/adaptar` + descripción de actividad → CU5
+Adaptación de actividades con enfoque DUA:
+- Sugerencias en: representación, acción/expresión, compromiso.
+- Ajustes particulares si se menciona TEA, TDAH, dislexia, etc.
+- Usa RAG + LLM y cita 1–2 documentos de inclusión/DUA.
 
-```
-{
-  "results": [
-    {
-      "title": "Inclusión educativa",
-      "content": "La inclusión educativa es...",
-      "source": "https://www.mineduc.cl/...",
-      "score": 0.9
-    },
-    ...
-  ]
-}
-```
+#### 3.6.5. Apoderados (rol caregiver)
 
-- DELETE /api/v1/reminders (elimina un recordatorio para un usuario)
+- `/pie` + pregunta → CU3 (vía lógica de resumen explicativo).
+Explicaciones simples sobre PIE, inclusión educativa, apoyos, etc.
 
-Ejemplo:
+- `/apoyo` + situación → CU6
+Orientaciones breves para acompañar el estudio y el bienestar (texto plano, sin LLM).
 
-```
-{
-  "telegram_id": 123456789,
-  "role": "student",
-  "experiment_tag": "pilot_docentes_2025S1",
-  "extra": {"colegio": "Liceo X", "curso": "8B"}
-}
-```
+- `/reporte_semana` → CU6
+Reporte semanal v1 del uso del asistente:
+- Interacciones totales en últimos 7 días.
+- Uso por comando / caso de uso.
+- Recordatorios completados vs. pendientes (si los hay)
 
-Respuesta esperada:
+#### 3.6.6. Coordinadores (rol coordinator)
 
-```
-{
-  "results": [
-    {
-      "title": "Inclusión educativa",
-      "content": "La inclusión educativa es...",
-      "source": "https://www.mineduc.cl/...",
-      "score": 0.9
-    },
-    ...
-  ]
-}
-```
-
-## 4. Comandos del bot de Telegram por rol
-
-El adapter `telegram_bot.py` hace long polling y mapea comandos a llamadas HTTP al backend (o a endpoints específicos de alertas). Los roles se guardan en `users.role` y en memoria (`user_roles`).
-
-### 4.1. Comandos por rol
-
-- `/soy_estudiante` -> role = student
-- `/soy_docente` -> role = teacher
-- `/soy_apoderado` -> role = caregiver
-- `/soy_coordinador` o `/soy_coordinadora` -> role = coordinator
-
-### 4.2. Comandos comunes
-
-- `/start`, mensaje de bienvenida adaptado al rol actual
-- `/ayuda`, lista de comandos disponibles adaptados al rol actual
-
-### 5.3. Estudiantes
-
-- `/tarea + descripción` -> CU1: planificación de tareas y estudio, detectando: tarea puntual, preparación de prueba/control.
-- `/explicacion + tema` -> CU2: explicación guiada con andamiaje, plantilla específica (ciclo del agua, fotosíntensis) y modos adicionales ("repaso rápido", "con ejercicios")
-
-### 5.4. Docentes
-
-- `/fuente + texto` -> CU7: búsqueda de fragmentos normativos / inclusión (RAG).
-- `/resumen + tema` -> CU3: pre-resumen de documentos relevantes.
-- `/quiz + tema` -> CU4: preguntas de evaluación formativa (base + ligadas a documentos).
-- `/adaptar + descripción de actividad` -> CU5: adaptación con apoyos DUA (incluye sugerencias específicas para TEA, TDAH, dislexia cuando se mencionan).
-
-### 5.5. Apoderados
-
-- `/reporte_semana` -> CU6: reporte semanal v1. 
-
-### 5.6. Coordinadores / convivencia (CU8)
+Comandos “conversacionales” sobre alertas:
 
 - `/alertas`
-Lista alertas pendientes (status = pending) desde teacher_alerts.
+Lista alertas pendientes (status = pending).
 
 - `/detalle_alerta ID`
-Muestra detalle y resumen de la alerta.
+Muestra detalle (tipo, estado, id estudiante/curso, resumen de mensaje).
 
 - `/alerta_en_revision ID`
 Cambia estado a in_review.
@@ -381,113 +314,135 @@ Cambia estado a in_review.
 - `/alerta_resuelta ID`
 Cambia estado a resolved.
 
-Nota: la detección de mensajes sensibles (riesgo de autolesión, violencia, etc.) se hace en el backend antes de responder al estudiante, y crea registros en teacher_alerts. El `bot NUNCA da diagnósticos`; solo genera mensajes de contención y derivación a adultos responsables.
+- `/alerta_ayuda ID`
+(opcional según implementación) puede marcar la alerta para apoyo externo o notas internas.
 
-## 6. RAG
+> La decisión final siempre es del equipo humano. El asistente sólo apoya la revisión de texto y la organización de alertas.
 
-El módulo `rag_service` maneja:
-- Ingesta de PDFs (MINEDUC, UNESCO, Ley de Autismo, DUA, currículum, etc.)
+## 4. RAG: documentos y búsquedas
 
-Uso típico: `python backend/scripts/ingest_inclusion_batch.py`
-- Indexación en documents y document_chunks (texto + embeddings).
+Ingesta de PDFs
+- Desde backend/scripts/ingest_inclusion_batch.py se procesan documentos (MINEDUC, UNESCO, PAEC, etc.).
+- Se extrae texto, se trocea y se genera:
+- `documents`
+- `document_chunks` (texto + embeddings)
 
-- Búsqueda:
-`search_snippets(query, filters, k) → usado por /fuente, /resumen, /quiz, /adaptar.`
-`search_documents(query, filters) → para citar documentos relevantes.`
+Búsqueda
+- `search_snippets(query, filters, k)`
+Devuelve fragmentos cortos + metadatos. Usado en: `/fuente`, `/resumen`, `/quiz`, `/adaptar`.
+- `search_documents(query, filters)`
+Devuelve documentos completos (para citar “Fuentes consultadas…”).
 
-- Metadatos relevantes de documentos:
-`doc_type` (ej. normativa_nacional, normativa_internacional, inclusion_autismo, paec, curriculo…)
-`subject`, `year`, `source`, `metadata` -> tags.
+Metadatos relevantes de documentos
+- `doc_type` → ej. normativa_nacional, normativa_internacional, inclusion_autismo, paec, curriculo, reglamento_interno…
+- `subject`, `year`
+- `source` (p.ej. "Carga Batch", "MINEDUC", "UNESCO")
+- `metadata` (JSON) → tags adicionales.
 
-## 7. Logging
+## 5. Loggings y métricas de uso
 
-Cada interacción que pasa por `/api/v1/messages` se registra en `interaction_logs`:
+Cada interacción procesada por /api/v1/messages se registra en interaction_logs:
 
-- Identificación: `user_id`, `role`, `course_id`
-- Caso de uso: `command`, `case_id` (CU1…CU8)
-- Técnica: `latency_ms`, `used_rag`, `used_cag`, `sensitive_flag`
-- Contenido: `raw_query`, `raw_reply`
+Campos principales:
 
-Investigación:
+Identificación
+- `user_id` (FK users)
+- `role` (student, teacher, caregiver, coordinator)
+- `course_id` (opcional)
+
+Caso de uso
+- `command` (ej. /quiz, /tarea)
+- `case_id` (CU1…CU8 o NULL)
+
+Técnico
+- `latency_ms` (sólo backend)
+- `used_rag` (bool)
+- `used_cag` (bool, uso de LLM / generación)
+- `sensitive_flag` (mensaje marcado como sensible)
+
+Contenido (para análisis cualitativo controlado)
+- `raw_query` (texto enviado)
+- `raw_reply` (texto respondido)
+
+Investigación
 - `experiment_tag` → etiqueta de piloto/estudio (ej. "pilot_docentes_2025S1").
-- `extra` (JSONB) → datos adicionales (colegio, curso, cohorte, etc.).
+- `extra` (JSONB) → datos de contexto (colegio, curso, cohorte, etc.).
 
-Ejmplos de consultas útiles:
+LLM
+- `llm_model` → p.ej. "gemini-2.0-flash"
+- `llm_prompt_tokens`
+- `llm_completion_tokens`
 
-```sql
--- uso por caso de estudio
-SELECT experiment_tag, case_id, COUNT(*) 
+Ejemplos de consultas:
+```
+-- Uso por caso de uso y experimento
+SELECT experiment_tag, case_id, COUNT(*) AS n
 FROM interaction_logs
 GROUP BY experiment_tag, case_id
 ORDER BY experiment_tag, case_id;
 
--- uso por rol y comando
-SELECT role, command, COUNT(*) 
+-- Uso por rol y comando
+SELECT role, command, COUNT(*) AS n
 FROM interaction_logs
 GROUP BY role, command
 ORDER BY role, command;
 
+-- Latencia promedio por caso de uso
+SELECT case_id,
+       AVG(latency_ms) AS avg_latency_ms,
+       COUNT(*)        AS n
+FROM interaction_logs
+GROUP BY case_id
+ORDER BY case_id;
+
+-- Tokens promedio consumidos por tipo de CU (sólo donde hubo LLM)
+SELECT case_id,
+       AVG(llm_prompt_tokens)     AS avg_prompt_tokens,
+       AVG(llm_completion_tokens) AS avg_completion_tokens,
+       COUNT(*)                   AS n
+FROM interaction_logs
+WHERE llm_model IS NOT NULL
+GROUP BY case_id
+ORDER BY case_id;
+
 ```
 
-## Variables de entorno:
+## 6. Variables de entorno
 
-### LLM (Gemini)
+### 6.1. LLM (Gemini)
 
-- `GOOGLE_API_KEY` (obligatoria): clave de la Gemini API.
-- `GEMINI_MODEL_NAME` (opcional): nombre del modelo, por defecto `gemini-2.0-flash`.
+Configurar en el entorno del backend:
+- `GEMINI_API_KEY` (obligatoria): clave de la API de Gemini.
+- `GEMINI_MODEL_NAME` (opcional): nombre del modelo, por defecto gemini-2.0-flash.
 
-### Telegram
+### 6.2. Telegram
 
+Usadas por telegram_bot.py:
 - `TELEGRAM_BOT_TOKEN`: token del bot.
-- `BACKEND_URL`: URL del endpoint `/api/v1/messages` (por defecto `http://backend:8000/api/v1/messages` en Docker).
+- `BACKEND_URL`: URL del endpoint /api/v1/messages.
+- En Docker típico: http://backend:8000/api/v1/messages.
+- En desarrollo local puro: http://localhost:8000/api/v1/messages.
 
-### PostgreSQL
+### 6.3. PostgreSQL
 
-- `DB_HOST`: host del servidor de base de datos.
-- `DB_PORT`: puerto del servidor de base de datos.
-- `DB_NAME`: nombre de la base de datos.
-- `DB_USER`: usuario de la base de datos.
-- `DB_PASSWORD`: contraseña de la base de datos.
+- `DB_HOST`
+- `DB_PORT`
+- `DB_NAME`
+- `DB_USER`
+- `DB_PASSWORD`
 
-## Referencias
+## 7. Notas éticas / limitaciones
 
-- [Documentación de FastAPI](https://fastapi.tiangolo.com/)
-- [Documentación de Uvicorn](https://www.uvicorn.org/)
-- [Documentación de PostgreSQL](https://www.postgresql.org/docs/)
-- [Documentación de Docker](https://docs.docker.com/)
-- [Documentación de Docker Compose](https://docs.docker.com/compose/)
-- [Documentación de Python](https://docs.python.org/3/)
-- [Documentación de Git](https://git-scm.com/docs)
-- [Documentación de GitHub](https://docs.github.com/)
-- [Documentación de GitHub Copilot](https://docs.github.com/en/copilot)
+- El sistema está diseñado para apoyo educativo, no para diagnóstico clínico.
+- La detección de texto sensible es heurística y conservadora; siempre se sugiere que la evaluación la realice un equipo humano.
+- Las respuestas del LLM pasan por prompts con restricciones de seguridad y estilo, pero pueden ser incompletas o requerir criterio profesional del docente/equipo.
+- Los identificadores usan telegram_id + metadatos contextuales; no se guardan nombres reales ni RUT en la base por defecto (esto se puede ajustar según protocolo ético de cada estudio/piloto).
 
-```
-@misc{granite2025,
-  author       = {{IBM Research}},
-  title        = {Granite 4.0 Nano Language Models},
-  year         = {2025},
-  howpublished = {\url{https://github.com/ibm-granite/granite-4.0-nano-language-models}},
-  note         = {Accessed: 2025-10-23}
-}
+## 8. Referencias técnicas
 
-@article{qwen3,
-    title={Qwen3 Technical Report}, 
-    author={An Yang and Anfeng Li and Baosong Yang and Beichen Zhang and Binyuan Hui and Bo Zheng and Bowen Yu and Chang Gao and Chengen Huang and Chenxu Lv and Chujie Zheng and Dayiheng Liu and Fan Zhou and Fei Huang and Feng Hu and Hao Ge and Haoran Wei and Huan Lin and Jialong Tang and Jian Yang and Jianhong Tu and Jianwei Zhang and Jianxin Yang and Jiaxi Yang and Jing Zhou and Jingren Zhou and Junyang Lin and Kai Dang and Keqin Bao and Kexin Yang and Le Yu and Lianghao Deng and Mei Li and Mingfeng Xue and Mingze Li and Pei Zhang and Peng Wang and Qin Zhu and Rui Men and Ruize Gao and Shixuan Liu and Shuang Luo and Tianhao Li and Tianyi Tang and Wenbiao Yin and Xingzhang Ren and Xinyu Wang and Xinyu Zhang and Xuancheng Ren and Yang Fan and Yang Su and Yichang Zhang and Yinger Zhang and Yu Wan and Yuqiong Liu and Zekun Wang and Zeyu Cui and Zhenru Zhang and Zhipeng Zhou and Zihan Qiu},
-    journal = {arXiv preprint arXiv:2505.09388},
-    year={2025}
-}
-
-@article{qwen2.5,
-    title   = {Qwen2.5 Technical Report}, 
-    author  = {An Yang and Baosong Yang and Beichen Zhang and Binyuan Hui and Bo Zheng and Bowen Yu and Chengyuan Li and Dayiheng Liu and Fei Huang and Haoran Wei and Huan Lin and Jian Yang and Jianhong Tu and Jianwei Zhang and Jianxin Yang and Jiaxi Yang and Jingren Zhou and Junyang Lin and Kai Dang and Keming Lu and Keqin Bao and Kexin Yang and Le Yu and Mei Li and Mingfeng Xue and Pei Zhang and Qin Zhu and Rui Men and Runji Lin and Tianhao Li and Tingyu Xia and Xingzhang Ren and Xuancheng Ren and Yang Fan and Yang Su and Yichang Zhang and Yu Wan and Yuqiong Liu and Zeyu Cui and Zhenru Zhang and Zihan Qiu},
-    journal = {arXiv preprint arXiv:2412.15115},
-    year    = {2024}
-}
-
-@article{qwen2,
-    title   = {Qwen2 Technical Report}, 
-    author  = {An Yang and Baosong Yang and Binyuan Hui and Bo Zheng and Bowen Yu and Chang Zhou and Chengpeng Li and Chengyuan Li and Dayiheng Liu and Fei Huang and Guanting Dong and Haoran Wei and Huan Lin and Jialong Tang and Jialin Wang and Jian Yang and Jianhong Tu and Jianwei Zhang and Jianxin Ma and Jin Xu and Jingren Zhou and Jinze Bai and Jinzheng He and Junyang Lin and Kai Dang and Keming Lu and Keqin Chen and Kexin Yang and Mei Li and Mingfeng Xue and Na Ni and Pei Zhang and Peng Wang and Ru Peng and Rui Men and Ruize Gao and Runji Lin and Shijie Wang and Shuai Bai and Sinan Tan and Tianhang Zhu and Tianhao Li and Tianyu Liu and Wenbin Ge and Xiaodong Deng and Xiaohuan Zhou and Xingzhang Ren and Xinyu Zhang and Xipin Wei and Xuancheng Ren and Yang Fan and Yang Yao and Yichang Zhang and Yu Wan and Yunfei Chu and Yuqiong Liu and Zeyu Cui and Zhenru Zhang and Zhihao Fan},
-    journal = {arXiv preprint arXiv:2407.10671},
-    year    = {2024}
-}
-```
+- FastAPI
+- PostgreSQL
+- pgvector
+- sentence-transformers
+- Docker
+- Docker Compose
