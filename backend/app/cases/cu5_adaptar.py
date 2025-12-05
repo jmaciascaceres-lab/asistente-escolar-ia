@@ -3,7 +3,7 @@ from typing import Tuple
 from ..rag_service import search_snippets
 from ..llm_client import generate_llm_answer, LLM_MODEL_NAME
 from ..llm_prompts import SYSTEM_PROMPT_TEACHER, build_cu5_user_prompt
-from ..utils_sources import build_sources_block_from_snippets
+from ..utils_sources import build_sources_block_from_snippets, estimate_snippet_coverage, MIN_COVERAGE_RATIO
 
 
 def _extract_adapt_request_from_msg(msg) -> str:
@@ -52,14 +52,25 @@ def adaptar_con_llm(msg) -> Tuple[str, dict]:
     answer_text, prompt_tokens, completion_tokens = generate_llm_answer(
         system_prompt=SYSTEM_PROMPT_TEACHER,
         user_prompt=user_prompt,
-        max_new_tokens=500,
-        temperature=0.6,
+        temperature=0.5,
     )
 
-    # 4) Fuentes con extractos
+    coverage = estimate_snippet_coverage(answer_text, snippets)
+    if snippets and coverage < MIN_COVERAGE_RATIO:
+        aviso = (
+            "Nota: esta propuesta de adaptación podría no estar fuertemente apoyada en los "
+            "fragmentos de documentos recuperados. Úsala solo como base de reflexión y revisa "
+            "directamente la normativa y las orientaciones del establecimiento.\n\n"
+        )
+        answer_text = aviso + answer_text
+
     sources_block = build_sources_block_from_snippets(snippets)
     if sources_block:
-        answer_text = answer_text.rstrip() + "\n\n" + sources_block
+        answer_text = (
+            answer_text
+            + "\n\nDebajo puedes ver textualmente qué dicen los documentos usados:\n\n"
+            + sources_block
+        )
 
     llm_meta = {
         "llm_model": LLM_MODEL_NAME,
