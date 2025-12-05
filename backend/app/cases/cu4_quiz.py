@@ -1,4 +1,3 @@
-# backend/app/cases/cu4_quiz.py
 from typing import Tuple
 
 from ..rag_service import search_snippets
@@ -54,7 +53,7 @@ def quiz_con_llm(msg) -> Tuple[str, dict]:
         temperature=0.7,
     )
 
-    # 4) Adjuntar bloque de fuentes
+    # 4) Bloque de fuentes
     sources_block = build_sources_block_from_snippets(snippets)
     if sources_block:
         answer_text = answer_text.rstrip() + "\n\n" + sources_block

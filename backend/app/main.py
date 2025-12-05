@@ -2,7 +2,7 @@ from enum import Enum
 import time
 import json
 from typing import Optional, List, Tuple    
-from .rag_service import search_documents, search_snippets
+from .rag_service import search_documents, search_snippets, ingest_document
 
 from .cases.cu2_explicar import explicar_con_llm
 from .cases.cu3_resumen import resumen_con_llm

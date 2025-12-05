@@ -53,7 +53,7 @@ def explicar_con_llm(msg) -> Tuple[str, dict]:
         temperature=0.6,
     )
 
-    # 4) Fuentes
+    # 4) Fuentes explícitas al final
     sources_block = build_sources_block_from_snippets(snippets)
     if sources_block:
         answer_text = answer_text.rstrip() + "\n\n" + sources_block

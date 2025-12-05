@@ -1,36 +1,84 @@
 # backend/app/utils_sources.py
-from typing import List, Dict
+from typing import List, Dict, Tuple, Any
 
-def build_sources_block_from_snippets(snippets: List[Dict], max_sources: int = 3) -> str:
+
+def _normalize_snippet_content(snippet: Dict[str, Any]) -> str:
+    """
+    Obtiene el contenido textual del snippet en una sola línea,
+    colapsando saltos de línea y espacios extra.
+    """
+    raw = (
+        snippet.get("content")
+        or snippet.get("snippet")
+        or snippet.get("text")
+        or ""
+    )
+    text = " ".join(str(raw).split())
+    return text
+
+
+def build_sources_block_from_snippets(
+    snippets: List[Dict],
+    max_sources: int = 3,
+    max_chars_per_snippet: int = 350,
+) -> str:
     """
     Construye un bloque de texto plano con las fuentes más relevantes
     a partir de una lista de snippets (cada snippet es un dict).
+
+    Incluye también un EXTRACTO textual de cada fragmento usado, para
+    que la persona pueda verificar qué dice realmente el documento.
     """
-    seen = set()
-    ordered = []
+    if not snippets:
+        return ""
+
+    seen_docs = set()
+    lines: List[str] = []
 
     for sn in snippets:
+        # Usamos document_id para agrupar; si no existe, caemos a (title, source)
+        doc_key: Tuple[Any, Any, Any] = (
+            sn.get("document_id"),
+            sn.get("title"),
+            sn.get("source"),
+        )
+        if doc_key in seen_docs:
+            continue
+        seen_docs.add(doc_key)
+
         title = sn.get("title") or "Documento sin título"
         source = sn.get("source") or ""
         year = sn.get("year")
-        key = (title, source, year)
-        if key in seen:
-            continue
-        seen.add(key)
-        ordered.append(key)
-        if len(ordered) >= max_sources:
+        score = sn.get("distance")
+
+        # Cabecera de la fuente
+        header = f"{len(seen_docs)}) {title}"
+        if year:
+            header += f" ({year})"
+        if source:
+            header += f" – {source}"
+        if score is not None:
+            try:
+                header += f" [relevancia aprox.: {1.0 - float(score):.3f}]"
+            except (TypeError, ValueError):
+                pass
+
+        # Extracto textual
+        content = _normalize_snippet_content(sn)
+        if len(content) > max_chars_per_snippet:
+            content = content[: max_chars_per_snippet - 3].rstrip() + "..."
+
+        lines.append(header)
+        if content:
+            lines.append(f"   Extracto: {content}")
+        lines.append("")  # línea en blanco entre fuentes
+
+        if len(seen_docs) >= max_sources:
             break
 
-    if not ordered:
-        return ""
-
-    lines = ["", "Fuentes consultadas (no exhaustivas):"]
-    for i, (title, source, year) in enumerate(ordered, start=1):
-        detalle = title
-        if year:
-            detalle += f" ({year})"
-        if source:
-            detalle += f" – {source}"
-        lines.append(f"{i}) {detalle}")
-
-    return "\n".join(lines)
+    block = (
+        "Fuentes consultadas (con extractos textuales de los documentos):\n\n"
+        "Debajo puedes ver textualmente qué dicen los documentos usados (al menos en parte):\n\n"
+    )
+    block += "\n".join(lines).rstrip()
+    return block

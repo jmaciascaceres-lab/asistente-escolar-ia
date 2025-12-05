@@ -440,9 +440,9 @@ Usadas por telegram_bot.py:
 
 ## 8. Referencias técnicas
 
-- FastAPI
-- PostgreSQL
-- pgvector
-- sentence-transformers
-- Docker
-- Docker Compose
+- FastAPI: https://fastapi.tiangolo.com/
+- PostgreSQL: https://www.postgresql.org/
+- pgvector: https://github.com/pgvector/pgvector
+- sentence-transformers: https://github.com/UKPLab/sentence-transformers
+- Docker: https://docs.docker.com/
+- Docker Compose: https://docs.docker.com/compose/
