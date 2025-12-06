@@ -68,7 +68,7 @@ def explicar_con_llm(msg) -> Tuple[str, dict]:
     if sources_block:
         answer_text = (
             answer_text
-            + "\n\nDebajo puedes ver textualmente qué dicen los documentos usados:\n\n"
+            + "\n\nDebajo puedes ver textualmente qué dicen los documentos usados (al menos en parte):\n\n"
             + sources_block
         )
 
