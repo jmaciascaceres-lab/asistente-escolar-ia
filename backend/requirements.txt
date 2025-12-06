@@ -4,7 +4,8 @@ psycopg2-binary
 python-dotenv
 pydantic
 requests
-sentence-transformers
+FlagEmbedding>=1.2.10
+sentence-transformers>=2.6.0
 numpy
 pypdf
 google-genai>=0.3.0

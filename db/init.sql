@@ -64,14 +64,14 @@ CREATE TABLE IF NOT EXISTS documents (
 
 -- Tabla de chunks para vectores (RAG)
 CREATE TABLE IF NOT EXISTS document_chunks (
-  id          BIGSERIAL PRIMARY KEY,
-  document_id BIGINT REFERENCES documents(id) ON DELETE CASCADE,
-  chunk_index INT NOT NULL,
-  content     TEXT NOT NULL,
-  embedding   vector(384),
-  metadata    JSONB DEFAULT '{}'::jsonb,
-  created_at  TIMESTAMPTZ DEFAULT now()
+    id              BIGSERIAL PRIMARY KEY,
+    document_id     BIGINT NOT NULL REFERENCES documents(id) ON DELETE CASCADE,
+    chunk_index     INT NOT NULL,
+    content         TEXT NOT NULL,
+    embedding       vector(1024) NOT NULL,
+    metadata        JSONB NOT NULL DEFAULT '{}'::jsonb
 );
+
 
 CREATE INDEX IF NOT EXISTS idx_document_chunks_document_id
   ON document_chunks (document_id);
