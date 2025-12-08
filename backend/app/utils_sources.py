@@ -73,7 +73,10 @@ def build_sources_block_from_snippets(
     for i, sn in enumerate(snippets, start=1):
         lines.append(_format_source_line(i, sn, include_scores=include_scores))
 
-    header = "Fuentes consultadas (con extractos textuales de los documentos):\n\n"
+    header = (
+        "Debajo puedes ver textualmente fragmentos de los documentos usados "
+        "(fuentes consultadas, no exhaustivas):\n\n"
+    )
     return header + "".join(lines)
 
 
