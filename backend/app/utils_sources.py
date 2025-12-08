@@ -56,28 +56,83 @@ def _format_source_line(
 
 def build_sources_block_from_snippets(
     snippets: List[Dict],
-    include_scores: bool = True,
+    max_sources: int = 3,
+    max_chars_per_snippet: int = 350,
 ) -> str:
     """
-    Construye el bloque de texto con las fuentes consultadas.
+    Construye un bloque de texto plano con las fuentes más relevantes
+    a partir de una lista de snippets (cada snippet es un dict).
 
-    IMPORTANTE:
-    - NO incluye la frase "Debajo puedes ver textualmente qué dicen los documentos usados".
-      Esa frase la estás agregando en cada CU antes de llamar a esta función, para evitar
-      duplicados.
+    Incluye un extracto textual de cada fragmento usado, para que la persona
+    pueda verificar qué dice realmente el documento.
     """
     if not snippets:
         return ""
 
+    seen_docs = set()
     lines: List[str] = []
-    for i, sn in enumerate(snippets, start=1):
-        lines.append(_format_source_line(i, sn, include_scores=include_scores))
+    any_truncated = False  # para avisar al final si recortamos extractos
 
-    header = (
-        "Debajo puedes ver textualmente fragmentos de los documentos usados "
-        "(fuentes consultadas, no exhaustivas):\n\n"
-    )
-    return header + "".join(lines)
+    for sn in snippets:
+        # Agrupamos por documento; si falta el id, usamos (title, source)
+        doc_key: Tuple[Any, Any, Any] = (
+            sn.get("document_id"),
+            sn.get("title"),
+            sn.get("source"),
+        )
+        if doc_key in seen_docs:
+            continue
+        seen_docs.add(doc_key)
+
+        title = sn.get("title") or "Documento sin título"
+        source = sn.get("source") or ""
+        year = sn.get("year")
+        distance = sn.get("distance")
+
+        # Etiqueta de "source" un poco más amigable para docentes
+        source_label = source
+        if source_label == "Carga Batch":
+            source_label = "Carga batch (ingesta interna)"
+
+        # Cabecera de la fuente
+        header = f"{len(seen_docs)}) {title}"
+        if year:
+            header += f" ({year})"
+        if source_label:
+            header += f" – {source_label}"
+        if distance is not None:
+            try:
+                header += f" [relevancia aprox.: {1.0 - float(distance):.3f}]"
+            except (TypeError, ValueError):
+                pass
+
+        # Extracto textual (recortado si es muy largo)
+        content = _normalize_snippet_content(sn)
+        truncated = False
+        if len(content) > max_chars_per_snippet:
+            truncated = True
+            any_truncated = True
+            # Dejamos espacio para el «…»
+            content = content[: max_chars_per_snippet - 1].rstrip() + "…"
+
+        lines.append(header)
+        if content:
+            lines.append(f"   Extracto: {content}")
+        lines.append("")  # línea en blanco entre fuentes
+
+        if len(seen_docs) >= max_sources:
+            break
+
+    block = "Fuentes consultadas (con extractos textuales de los documentos):\n\n"
+    block += "\n".join(lines).rstrip()
+
+    if any_truncated:
+        block += (
+            "\n\nNota: algunos extractos fueron recortados por extensión "
+            "(marcados con «…»). Revisa el documento original si necesitas el párrafo completo."
+        )
+
+    return block
 
 
 def _tokenize_spanish(text: str) -> List[str]:
