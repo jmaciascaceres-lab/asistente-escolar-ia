@@ -446,3 +446,34 @@ Usadas por telegram_bot.py:
 - sentence-transformers: https://github.com/UKPLab/sentence-transformers
 - Docker: https://docs.docker.com/
 - Docker Compose: https://docs.docker.com/compose/
+
+## 9. Mantenimiento RAG
+
+- `rag_maintenance.py`: script para mantenimiento de documentos y chunks.
+
+Algunas sentencias:
+
+- Listar 50 primeros documentos (sin filtros)
+`python scripts/rag_maintenance.py list`
+
+- Listar solo normativa nacional del batch inclusion_batch_v1.1
+`python scripts/rag_maintenance.py list --doc-type normativa_nacional --batch-tag inclusion_batch_v1.1`
+
+- Listar documentos cuyo filename contiene "LeyAutismo"
+`python scripts/rag_maintenance.py list --filename-substr LeyAutismo`
+
+- Borrar todos los documentos de un batch (ej: inclusion_batch_v1.1) SIN pedir confirmación
+`python scripts/rag_maintenance.py delete-batch inclusion_batch_v1.1 --force`
+
+- Borrar todos los documentos "legacy" sin batch_tag (lo que más te interesa para limpiar v0)
+`python scripts/rag_maintenance.py delete-legacy`
+
+Limpieza directamente desde la base de datos:
+
+```sql
+BEGIN;
+
+TRUNCATE TABLE document_chunks RESTART IDENTITY CASCADE;
+TRUNCATE TABLE documents RESTART IDENTITY CASCADE;
+
+COMMIT;
