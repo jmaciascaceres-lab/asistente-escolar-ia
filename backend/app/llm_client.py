@@ -41,37 +41,60 @@ def generate_llm_answer(
         max_output_tokens=max_new_tokens,
     )
 
-    try:
-        response = client.models.generate_content(
-            model=LLM_MODEL_NAME,
-            contents=full_prompt,
-            config=config,
-        )
+    max_retries = 3
+    base_delay = 20.0  # Segundos
 
-        answer_text = (response.text or "").strip()
-        # Limpieza básica de formato
-        answer_text = answer_text.replace("**", "")
-
-        prompt_tokens = 0
-        completion_tokens = 0
-        usage = getattr(response, "usage_metadata", None)
-        if usage is not None:
-            prompt_tokens = (
-                getattr(usage, "prompt_token_count", None)
-                or getattr(usage, "promptTokenCount", 0)
-            )
-            completion_tokens = (
-                getattr(usage, "candidates_token_count", None)
-                or getattr(usage, "candidatesTokenCount", 0)
+    for attempt in range(max_retries + 1):
+        try:
+            response = client.models.generate_content(
+                model=LLM_MODEL_NAME,
+                contents=full_prompt,
+                config=config,
             )
 
-        return answer_text, int(prompt_tokens or 0), int(completion_tokens or 0)
+            answer_text = (response.text or "").strip()
+            # Limpieza básica de formato
+            answer_text = answer_text.replace("**", "")
 
-    except Exception as e:
-        # Log a consola, pero no rompas la experiencia del usuario
-        print("[LLM] Error llamando a Gemini:", repr(e))
-        fallback = (
-            "En este momento no puedo generar una respuesta completa. "
-            "Intenta de nuevo en unos minutos, o consulta a tu profesora o profesor."
-        )
-        return fallback, 0, 0
+            prompt_tokens = 0
+            completion_tokens = 0
+            usage = getattr(response, "usage_metadata", None)
+            if usage is not None:
+                prompt_tokens = (
+                    getattr(usage, "prompt_token_count", None)
+                    or getattr(usage, "promptTokenCount", 0)
+                )
+                completion_tokens = (
+                    getattr(usage, "candidates_token_count", None)
+                    or getattr(usage, "candidatesTokenCount", 0)
+                )
+
+            return answer_text, int(prompt_tokens or 0), int(completion_tokens or 0)
+
+        except Exception as e:
+            error_msg = str(e)
+            # Chequeo "naive" de errores de cuota (429 / Resource Exhausted)
+            if "RESOURCE_EXHAUSTED" in error_msg or "429" in error_msg:
+                if attempt < max_retries:
+                    # Exponential backoff: 4s, 8s, 16s... + jitter
+                    import time
+                    import random
+
+                    sleep_time = base_delay * (2**attempt) + random.uniform(0, 1)
+                    print(
+                        f"[LLM] Cuota excedida. Reintentando en {sleep_time:.2f}s (Intento {attempt+1}/{max_retries})"
+                    )
+                    time.sleep(sleep_time)
+                    continue
+                else:
+                    print(f"[LLM] Se agotaron los reintentos. Error final: {error_msg}")
+            else:
+                # Si es otro error, no reintentamos (o podrías decidir hacerlo)
+                print("[LLM] Error no recuperable o distinto a cuota:", error_msg)
+                break
+
+    fallback = (
+        "En este momento no puedo generar una respuesta completa debido a alta demanda. "
+        "Intenta de nuevo en unos minutos, o consulta a tu profesora o profesor."
+    )
+    return fallback, 0, 0

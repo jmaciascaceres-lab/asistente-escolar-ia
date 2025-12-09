@@ -123,7 +123,7 @@ def build_sources_block_from_snippets(
         if len(seen_docs) >= max_sources:
             break
 
-    block = "Fuentes consultadas (con extractos textuales de los documentos):\n\n"
+    block = "\n\nFuentes consultadas (con extractos textuales de los documentos):\n\n"
     block += "\n".join(lines).rstrip()
 
     if any_truncated:

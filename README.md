@@ -477,3 +477,44 @@ TRUNCATE TABLE document_chunks RESTART IDENTITY CASCADE;
 TRUNCATE TABLE documents RESTART IDENTITY CASCADE;
 
 COMMIT;
+```
+
+## 10. Ingesta de documentos
+
+- `ingest_inclusion_batch.py`: script para ingestar documentos de inclusión.
+
+Algunas sentencias:
+
+-- ¿Cuántos documentos se cargaron?
+```sql
+SELECT COUNT(*) AS total_docs FROM documents;
+```
+
+-- Documentos por tipo (normativa, inclusión, currículo, etc.)
+```sql
+SELECT doc_type, COUNT(*) 
+FROM documents
+GROUP BY doc_type
+ORDER BY doc_type;
+```
+
+-- ¿Cuántos chunks hay?
+```sql
+SELECT COUNT(*) AS total_chunks FROM document_chunks;
+```
+
+-- Confirmar que TODO lo nuevo corresponde al batch_tag-1.0
+```sql
+SELECT source, COUNT(*) 
+FROM documents
+GROUP BY source
+ORDER BY source;
+```
+
+-- Ver 5 documentos de ejemplo, para sanity check
+```sql
+SELECT id, title, doc_type, source
+FROM documents
+ORDER BY id
+LIMIT 5;
+```
