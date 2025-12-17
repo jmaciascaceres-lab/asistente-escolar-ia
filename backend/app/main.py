@@ -1308,7 +1308,7 @@ def generate_cu7_response(msg: MessageIn) -> str:
         lines.append(header)
         if url:
             lines.append(url)
-        lines.append(f"   Extracto: {preview}\n")
+        lines.append(f"Extracto: {preview}\n")
 
     cierre = (
         "\nTe sugiero revisar estos documentos completos y, si se trata de una situación compleja, "

@@ -94,7 +94,7 @@ def _format_source_line(
 
     return (
         f"{idx}) {title}{year_str} – {source}{score_str}\n"
-        f"   Extracto: {content_preview}\n"
+        f"Extracto: {content_preview}\n"
     )
 
 
@@ -145,7 +145,7 @@ def build_sources_block_from_snippets(
             if len(content) > max_chars_per_snippet:
                 any_truncated = True
                 content = content[: max_chars_per_snippet - 1].rstrip() + "…"
-            lines.append(f"   Extracto: {content}")
+            lines.append(f"Extracto: {content}")
 
         lines.append("")  # separación visual
 
