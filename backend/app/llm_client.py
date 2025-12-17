@@ -6,7 +6,7 @@ from google import genai
 from google.genai import types
 
 _client = None
-LLM_MODEL_NAME = os.getenv("GEMINI_MODEL_NAME", "gemini-2.0-flash")
+LLM_MODEL_NAME = os.getenv("GEMINI_MODEL_NAME", "gemini-2.5-flash")
 
 
 def _get_client() -> genai.Client:
