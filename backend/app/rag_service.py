@@ -13,6 +13,7 @@ def ingest_document(
     source: Optional[str] = None,
     subject: Optional[str] = None,
     year: Optional[int] = None,
+    url: Optional[str] = None,
     metadata: Optional[dict] = None,
 ) -> int:
     """
@@ -44,7 +45,7 @@ def search_documents(
     """
     filters = filters or {}
     sql = """
-        SELECT id, title, doc_type, source, subject, year, metadata
+        SELECT id, title, doc_type, source, subject, url, year, metadata
         FROM documents
         WHERE (title ILIKE %s OR metadata::text ILIKE %s)
     """
@@ -73,8 +74,9 @@ def search_documents(
                         "doc_type": row[2],
                         "source": row[3],
                         "subject": row[4],
-                        "year": row[5],
-                        "metadata": row[6] or {},
+                        "year": row[5], 
+                        "url": row[6],
+                        "metadata": row[7] or {},
                     }
                 )
     return results
@@ -115,6 +117,7 @@ def ingest_document_with_text(
     source: Optional[str] = None,
     subject: Optional[str] = None,
     year: Optional[int] = None,
+    url: Optional[str] = None,
     metadata: Optional[dict] = None,
 ) -> int:
     """
@@ -168,6 +171,7 @@ def search_snippets(
             d.source,
             d.subject,
             d.year,
+            d.url,
             (dc.embedding <-> %s::vector) AS distance
         FROM document_chunks dc
         JOIN documents d ON dc.document_id = d.id
@@ -202,7 +206,8 @@ def search_snippets(
                         "source": row[6],
                         "subject": row[7],
                         "year": row[8],
-                        "distance": float(row[9]),
+                        "url": row[9],
+                        "distance": float(row[10]),
                     }
                 )
 

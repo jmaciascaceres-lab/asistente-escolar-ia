@@ -1,10 +1,54 @@
 # backend/app/utils_sources.py
 import os
 import re
-from typing import List, Dict, Tuple, Any, Optional
+from typing import List, Dict, Tuple, Any, Optional, Iterable
 
 # Umbral configurable para marcar baja cobertura entre respuesta y fragmentos
 MIN_COVERAGE_RATIO = float(os.getenv("LLM_MIN_COVERAGE_RATIO", "0.03"))
+
+
+def _clean_text(s: Optional[str]) -> str:
+    return (s or "").strip()
+
+def format_sources_user_facing(documents: Iterable, max_sources: int = 5) -> str:
+    """
+    Formato para Telegram (texto plano):
+    1) Título (año opcional)
+       URL
+    Sin source/batch_tag/similarity.
+    """
+    seen = set()
+    lines = []
+    n = 0
+
+    for d in documents:
+        doc_id = getattr(d, "id", None) or getattr(d, "document_id", None)
+        if doc_id in seen:
+            continue
+        seen.add(doc_id)
+
+        title = _clean_text(getattr(d, "title", None) or getattr(d, "document_title", None))
+        year = getattr(d, "year", None)
+        url = _clean_text(getattr(d, "url", None))
+
+        if not title:
+            continue
+
+        n += 1
+        header = f"{n}) {title}" + (f" ({year})" if year else "")
+        lines.append(header)
+
+        if url:
+            # Telegram lo vuelve clickeable automáticamente
+            lines.append(url)
+
+        if n >= max_sources:
+            break
+
+    if not lines:
+        return ""
+
+    return "Fuentes consultadas (enlaces):\n" + "\n".join(lines)
 
 
 def _normalize_snippet_content(snippet: Dict[str, Any]) -> str:
@@ -60,71 +104,61 @@ def build_sources_block_from_snippets(
     max_chars_per_snippet: int = 350,
 ) -> str:
     """
-    Construye un bloque de texto plano con las fuentes más relevantes
-    a partir de una lista de snippets (cada snippet es un dict).
+    Construye un bloque de texto plano con fuentes y enlaces, sin exponer
+    metadatos internos (batch_tag/source) ni puntajes de similitud.
 
-    Incluye un extracto textual de cada fragmento usado, para que la persona
-    pueda verificar qué dice realmente el documento.
+    Incluye un extracto textual acotado de cada fragmento usado, para que
+    la persona pueda verificar qué dice realmente el documento.
     """
     if not snippets:
         return ""
 
     seen_docs = set()
     lines: List[str] = []
-    any_truncated = False  # para avisar al final si recortamos extractos
+    any_truncated = False
 
     for sn in snippets:
-        # Agrupamos por documento; si falta el id, usamos (title, source)
-        doc_key: Tuple[Any, Any, Any] = (
+        doc_key = (
             sn.get("document_id"),
             sn.get("title"),
-            sn.get("source"),
+            sn.get("url"),
         )
         if doc_key in seen_docs:
             continue
         seen_docs.add(doc_key)
 
         title = sn.get("title") or "Documento sin título"
-        source = sn.get("source") or ""
         year = sn.get("year")
-        distance = sn.get("distance")
+        url = (sn.get("url") or "").strip()
 
-        # Etiqueta de "source" un poco más amigable para docentes
-        source_label = source
-        if source_label == "Carga Batch":
-            source_label = "Carga batch (ingesta interna)"
-
-        # Cabecera de la fuente
         header = f"{len(seen_docs)}) {title}"
         if year:
             header += f" ({year})"
-        if source_label:
-            header += f" – {source_label}"
-        if distance is not None:
-            try:
-                header += f" [relevancia aprox.: {1.0 - float(distance):.3f}]"
-            except (TypeError, ValueError):
-                pass
-
-        # Extracto textual (recortado si es muy largo)
-        content = _normalize_snippet_content(sn)
-        truncated = False
-        if len(content) > max_chars_per_snippet:
-            truncated = True
-            any_truncated = True
-            # Dejamos espacio para el «…»
-            content = content[: max_chars_per_snippet - 1].rstrip() + "…"
-
         lines.append(header)
+
+        # URL clickeable en Telegram (texto plano)
+        if url:
+            lines.append(url)
+
+        content = _normalize_snippet_content(sn)
         if content:
+            if len(content) > max_chars_per_snippet:
+                any_truncated = True
+                content = content[: max_chars_per_snippet - 1].rstrip() + "…"
             lines.append(f"   Extracto: {content}")
-        lines.append("")  # línea en blanco entre fuentes
+
+        lines.append("")  # separación visual
 
         if len(seen_docs) >= max_sources:
             break
 
-    block = "\n\nFuentes consultadas (con extractos textuales de los documentos):\n\n"
-    block += "\n".join(lines).rstrip()
+    while lines and lines[-1] == "":
+        lines.pop()
+
+    if not lines:
+        return ""
+
+    block = "Fuentes consultadas (enlaces + extractos):\n\n" + "\n".join(lines).rstrip()
 
     if any_truncated:
         block += (

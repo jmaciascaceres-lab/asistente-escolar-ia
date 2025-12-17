@@ -1296,16 +1296,19 @@ def generate_cu7_response(msg: MessageIn) -> str:
 
     lines = []
     for i, sn in enumerate(snippets, start=1):
-        title = sn["title"]
-        source = sn.get("source") or "fuente interna"
-        doc_type = sn.get("doc_type") or ""
+        title = sn.get("title") or "Documento sin título"
+        year = sn.get("year")
+        url = (sn.get("url") or "").strip()
+
         # Pequeño preview del contenido
-        content = sn["content"].replace("\n", " ")
+        content = (sn.get("content") or "").replace("\n", " ")
         preview = content[:280] + ("..." if len(content) > 280 else "")
-        lines.append(
-            f"{i}) Documento: {title} ({source}, tipo: {doc_type}).\n"
-            f"   Extracto: {preview}\n"
-        )
+
+        header = f"{i}) {title}" + (f" ({year})" if year else "")
+        lines.append(header)
+        if url:
+            lines.append(url)
+        lines.append(f"   Extracto: {preview}\n")
 
     cierre = (
         "\nTe sugiero revisar estos documentos completos y, si se trata de una situación compleja, "

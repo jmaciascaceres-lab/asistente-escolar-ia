@@ -36,10 +36,9 @@ def adaptar_con_llm(msg) -> Tuple[str, dict]:
     context_blocks = []
     for i, sn in enumerate(snippets, start=1):
         title = sn.get("title") or "sin título"
-        source = sn.get("source") or "fuente interna"
         content = sn.get("content") or ""
         context_blocks.append(
-            f"[Fragmento {i}] Documento: {title} ({source})\n{content}"
+            f"[Fragmento {i}] Documento: {title}\n{content}"
         )
     context_text = "\n\n".join(context_blocks)
 

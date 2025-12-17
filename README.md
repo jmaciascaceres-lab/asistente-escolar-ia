@@ -3,7 +3,7 @@
 Asistente Escolar IA es un prototipo de asistente conversacional con enfoque de inclusión educativa para contexto escolar chileno. Integra:
 
 - Un bot de Telegram para interacción con estudiantes, docentes, apoderados y equipos de convivencia.
-- Un backend FastAPI con lógica de casos de uso (CU1–CU8).
+- Un backend FastAPI con lógica de casos de uso (CU1-CU8).
 - Un módulo RAG (Retrieval-Augmented Generation) sobre documentos MINEDUC / UNESCO / inclusión.
 - Una base de datos PostgreSQL para usuarios, interacciones y documentos.
 - Un LLM externo (Gemini) para generación de texto controlada.
@@ -282,7 +282,7 @@ Generación de preguntas de evaluación formativa:
 Adaptación de actividades con enfoque DUA:
 - Sugerencias en: representación, acción/expresión, compromiso.
 - Ajustes particulares si se menciona TEA, TDAH, dislexia, etc.
-- Usa RAG + LLM y cita 1–2 documentos de inclusión/DUA.
+- Usa RAG + LLM y cita 1-2 documentos de inclusión/DUA.
 
 #### 3.6.5. Apoderados (rol caregiver)
 
