@@ -51,6 +51,33 @@ def format_sources_user_facing(documents: Iterable, max_sources: int = 5) -> str
     return "Fuentes consultadas (enlaces):\n" + "\n".join(lines)
 
 
+def _safe_excerpt(text: str, max_chars: int) -> Tuple[str, bool]:
+    """
+    Recorta a un máximo de caracteres sin cortar palabras al inicio/fin.
+    Devuelve (excerpt, truncated).
+    """
+    if not text:
+        return "", False
+
+    # Normaliza espacios y saltos de línea para Telegram
+    t = re.sub(r"\s+", " ", text).strip()
+
+    if len(t) <= max_chars:
+        return t, False
+
+    # Tomamos un poco más para poder retroceder a un espacio
+    slice_ = t[: max_chars + 1]
+
+    # Retrocede al último espacio para no cortar palabra
+    cut = slice_.rfind(" ")
+    if cut == -1 or cut < int(max_chars * 0.6):
+        # Si no hay espacios (o quedan demasiado pocos chars), fallback duro
+        cut = max_chars
+
+    out = slice_[:cut].rstrip(" ,;:.-")
+    return out + "…", True
+
+
 def _normalize_snippet_content(snippet: Dict[str, Any]) -> str:
     """
     Obtiene el contenido textual del snippet en una sola línea,
@@ -142,10 +169,11 @@ def build_sources_block_from_snippets(
 
         content = _normalize_snippet_content(sn)
         if content:
-            if len(content) > max_chars_per_snippet:
-                any_truncated = True
-                content = content[: max_chars_per_snippet - 1].rstrip() + "…"
-            lines.append(f"Extracto: {content}")
+            excerpt, truncated = _safe_excerpt(content, max_chars_per_snippet)
+            any_truncated = any_truncated or truncated
+
+            if excerpt:
+                lines.append(f"Extracto: <<{excerpt}>>")
 
         lines.append("")  # separación visual
 

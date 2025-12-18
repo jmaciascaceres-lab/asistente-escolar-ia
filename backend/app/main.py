@@ -3,6 +3,7 @@ import time
 import json
 from typing import Optional, List, Tuple    
 from .rag_service import search_documents, search_snippets, ingest_document
+from .utils_sources import _safe_excerpt
 
 from .cases.cu2_explicar import explicar_con_llm
 from .cases.cu3_resumen import resumen_con_llm
@@ -1300,15 +1301,19 @@ def generate_cu7_response(msg: MessageIn) -> str:
         year = sn.get("year")
         url = (sn.get("url") or "").strip()
 
-        # Pequeño preview del contenido
-        content = (sn.get("content") or "").replace("\n", " ")
-        preview = content[:280] + ("..." if len(content) > 280 else "")
+        content = (sn.get("content") or "")
+        excerpt, _ = _safe_excerpt(content, 280)
 
         header = f"{i}) {title}" + (f" ({year})" if year else "")
         lines.append(header)
+
         if url:
             lines.append(url)
-        lines.append(f"Extracto: {preview}\n")
+
+        if excerpt:
+            lines.append(f"Extracto: <<{excerpt}>>")
+
+        lines.append("")  # separación
 
     cierre = (
         "\nTe sugiero revisar estos documentos completos y, si se trata de una situación compleja, "
