@@ -41,6 +41,17 @@ def send_message(chat_id: int, text: str) -> dict:
     return data
 
 
+def normalize_command(text: str) -> str | None:
+    """
+    Devuelve el comando normalizado (sin @BotName) o None si no hay comando.
+    Ej: "/quiz@MiBot tema" -> "/quiz"
+    """
+    if not text.startswith("/"):
+        return None
+    cmd = text.split()[0].strip()
+    return cmd.split("@")[0]  # quita @BotName en grupos
+
+
 user_roles: Dict[int, str] = {}  # telegram_id -> role ("student", "teacher", etc.)
 
 def get_start_message_for_role(role: str) -> str:
@@ -142,7 +153,7 @@ def get_help_message_for_role(role: str) -> str:
             "• /fuente + texto\n"
             "  Busca fragmentos normativos o lineamientos relevantes.\n\n"
             "• /resumen + tema\n"
-            "  Pre-resumen de documentos para preparar reuniones o planes de apoyo."
+            "  Pre-resumen de documentos para preparar reuniones o planes de apoyo.\n\n"
             "• /alerta_ayuda ID\n"
             "  Entrega orientaciones generales para que el equipo revise una alerta concreta.\n\n"
         )
@@ -323,6 +334,65 @@ def main():
                     send_message(chat_id, "\n".join(msg_lines))
                     continue
 
+                # --- /alerta_ayuda ID (coordinador) ---
+                if text.startswith("/alerta_ayuda"):
+                    role = user_roles.get(from_id, "student")
+                    if role != "coordinator":
+                        send_message(
+                            chat_id,
+                            "El comando /alerta_ayuda está pensado para coordinadores o equipos de convivencia."
+                        )
+                        continue
+
+                    parts = text.split(maxsplit=1)
+                    if len(parts) < 2:
+                        send_message(chat_id, "Uso: /alerta_ayuda ID (por ejemplo, /alerta_ayuda 3).")
+                        continue
+
+                    try:
+                        alert_id = int(parts[1].strip())
+                    except ValueError:
+                        send_message(chat_id, "El ID de la alerta debe ser un número.")
+                        continue
+
+                    # Traer detalle de la alerta
+                    try:
+                        resp = requests.get(
+                            f"{BACKEND_URL.rsplit('/api', 1)[0]}/api/v1/alerts/{alert_id}",
+                            timeout=20,
+                        )
+                        if resp.status_code == 404:
+                            send_message(chat_id, f"No encontré la alerta con ID {alert_id}.")
+                            continue
+                        if resp.status_code != 200:
+                            send_message(chat_id, "No pude obtener el detalle de la alerta para entregar orientación.")
+                            continue
+                        data_alert = resp.json()
+                    except Exception as e:
+                        print("Error obteniendo detalle de alerta:", e)
+                        send_message(chat_id, "No pude obtener el detalle de la alerta en este momento.")
+                        continue
+
+                    # Orientación operativa (texto plano, sin LLM)
+                    msg_lines = [
+                        f"Orientación para revisar alerta ID {data_alert['alert_id']}",
+                        f"- Tipo: {data_alert['alert_type']}",
+                        f"- Estado: {data_alert['status']}",
+                        f"- Estudiante_id: {data_alert['student_id']} | Curso_id: {data_alert['course_id']}",
+                        "",
+                        "Checklist sugerido (equipo humano):",
+                        "1) Verificar urgencia: si hay riesgo inmediato, activar protocolo del establecimiento.",
+                        "2) Revisar el mensaje original y el contexto (no basarse solo en el resumen).",
+                        "3) Coordinar contacto con adulto responsable (profesor jefe/convivencia/PIE) según protocolo.",
+                        "4) Registrar acciones y acuerdos (trazabilidad mínima).",
+                        "5) Definir seguimiento (fecha, responsable, señales a monitorear).",
+                        "",
+                        "Resumen registrado:",
+                        data_alert.get("summary", "(sin resumen)"),
+                    ]
+                    send_message(chat_id, "\n".join(msg_lines))
+                    continue
+
                 # --- /alerta_en_revision ID (coordinador) ---
                 if text.startswith("/alerta_en_revision"):
                     role = user_roles.get(from_id, "student")
@@ -416,7 +486,7 @@ def main():
                     settings["extra"] = {**EXTRA_BASE_DOCENTES}
 
                 # Comando principal (si parte con "/")
-                command = text.split()[0] if text.startswith("/") else None
+                command = normalize_command(text)
 
                 # 1) Mensaje preliminar para comandos "pesados" (usan RAG + LLM)
                 heavy_commands = {"/explicar", "/quiz", "/adaptar", "/resumen", "/fuente"}

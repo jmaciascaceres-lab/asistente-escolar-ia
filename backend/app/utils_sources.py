@@ -186,12 +186,12 @@ def build_sources_block_from_snippets(
     if not lines:
         return ""
 
-    block = ".\n\nFuentes consultadas (enlaces + extractos):\n\n" + "\n".join(lines).rstrip()
+    block = "\n\nFuentes consultadas (enlaces + extractos):\n\n" + "\n".join(lines).rstrip()
 
     if any_truncated:
         block += (
             "\n\nNota: algunos extractos fueron recortados por extensión "
-            "(marcados con «…»). Revisa el documento original si necesitas el párrafo completo."
+            "(marcados con ...). Revisa el documento original si necesitas el párrafo completo."
         )
 
     return block

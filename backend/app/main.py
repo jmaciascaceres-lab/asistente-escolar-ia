@@ -84,6 +84,7 @@ class RagDocumentOut(BaseModel):
     source: Optional[str] = None
     subject: Optional[str] = None
     year: Optional[int] = None
+    url: Optional[str] = None
     metadata: dict = {}
 
 
@@ -98,6 +99,7 @@ class RagIngestRequest(BaseModel):
     source: Optional[str] = None
     subject: Optional[str] = None
     year: Optional[int] = None
+    url: Optional[str] = None
     metadata: dict = {}
 
 
@@ -169,6 +171,7 @@ async def rag_search(payload: RagQuery):
             source=d["source"],
             subject=d["subject"],
             year=d["year"],
+            url=d["url"],
             metadata=d["metadata"] or {},
         )
         for d in docs

@@ -24,11 +24,11 @@ def ingest_document(
         with conn.cursor() as cur:
             cur.execute(
                 """
-                INSERT INTO documents (title, doc_type, source, subject, year, metadata)
-                VALUES (%s, %s, %s, %s, %s, %s)
+                INSERT INTO documents (title, doc_type, source, subject, year, url, metadata)
+                VALUES (%s, %s, %s, %s, %s, %s, %s)
                 RETURNING id;
                 """,
-                (title, doc_type, source, subject, year, Json(metadata or {})),
+                (title, doc_type, source, subject, year, url, Json(metadata or {})),
             )
             row = cur.fetchone()
             return int(row[0])
@@ -74,8 +74,8 @@ def search_documents(
                         "doc_type": row[2],
                         "source": row[3],
                         "subject": row[4],
-                        "year": row[5], 
-                        "url": row[6],
+                        "url": row[5],
+                        "year": row[6],
                         "metadata": row[7] or {},
                     }
                 )
@@ -87,7 +87,7 @@ def search_documents(
 
 def chunk_text(text: str, max_chars: int = 800, overlap: int = 100) -> List[str]:
     """
-    Chunking muy simple por caracteres (se puede refinar luego por párrafos/oraciones).
+    Chunking por caracteres con ajuste a límites de palabra para evitar cortar términos.
     """
     text = text.replace("\r", " ")
     chunks: List[str] = []
@@ -96,6 +96,24 @@ def chunk_text(text: str, max_chars: int = 800, overlap: int = 100) -> List[str]
 
     while start < n:
         end = min(start + max_chars, n)
+
+        # Si caemos en medio de una palabra, avanzamos al próximo separador
+        if start > 0 and text[start].isalnum() and text[start - 1].isalnum():
+            while start < n and text[start].isalnum():
+                start += 1
+            while start < n and text[start].isspace():
+                start += 1
+
+        end = min(start + max_chars, n)
+
+        # Si el corte queda en medio de una palabra, retrocedemos al último espacio "razonable"
+        if end < n and text[end].isalnum() and text[end - 1].isalnum():
+            window_start = start + int(max_chars * 0.6)
+            window_start = min(window_start, end)
+            cut = text.rfind(" ", window_start, end)
+            if cut != -1:
+                end = cut
+
         chunk = text[start:end].strip()
         if chunk:
             chunks.append(chunk)
@@ -124,7 +142,7 @@ def ingest_document_with_text(
     Crea un registro en documents y sus correspondientes chunks en document_chunks,
     con embeddings listos para búsqueda semántica.
     """
-    doc_id = ingest_document(title, doc_type, source, subject, year, metadata)
+    doc_id = ingest_document(title, doc_type, source, subject, year, url, metadata)
 
     chunks = chunk_text(full_text)
     if not chunks:
