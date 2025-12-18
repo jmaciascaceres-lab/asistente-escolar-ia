@@ -173,7 +173,7 @@ def build_sources_block_from_snippets(
             any_truncated = any_truncated or truncated
 
             if excerpt:
-                lines.append(f"Extracto: <<{excerpt}>>")
+                lines.append(f"Extracto: «{excerpt}»")
 
         lines.append("")  # separación visual
 
@@ -186,7 +186,7 @@ def build_sources_block_from_snippets(
     if not lines:
         return ""
 
-    block = "Fuentes consultadas (enlaces + extractos):\n\n" + "\n".join(lines).rstrip()
+    block = ".\n\nFuentes consultadas (enlaces + extractos):\n\n" + "\n".join(lines).rstrip()
 
     if any_truncated:
         block += (

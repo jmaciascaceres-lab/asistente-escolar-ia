@@ -1311,7 +1311,7 @@ def generate_cu7_response(msg: MessageIn) -> str:
             lines.append(url)
 
         if excerpt:
-            lines.append(f"Extracto: <<{excerpt}>>")
+            lines.append(f"Extracto: «{excerpt}»")
 
         lines.append("")  # separación
 
