@@ -7,8 +7,64 @@ from typing import List, Dict, Tuple, Any, Optional, Iterable
 MIN_COVERAGE_RATIO = float(os.getenv("LLM_MIN_COVERAGE_RATIO", "0.03"))
 
 
+def infer_subject(query: str) -> Optional[str]:
+    q = (query or "").lower()
+    if any(k in q for k in ["ciclo del agua", "fotosíntesis", "ecosistema", "materia", "energía", "célula"]):
+        return "Ciencias Naturales"
+    if any(k in q for k in ["fracción", "ecuación", "porcentaje", "geometría", "multiplicar", "dividir"]):
+        return "Matemática"
+    if any(k in q for k in ["comprensión lectora", "sujeto", "predicado", "texto", "cuento", "poema"]):
+        return "Lenguaje y Comunicación"
+    if any(k in q for k in ["revolución", "independencia", "geografía", "mapa", "estado", "democracia"]):
+        return "Historia, Geografía y Ciencias Sociales"
+    return None
+
+
+def _single_line(s: str) -> str:
+    return re.sub(r"\s+", " ", (s or "")).strip()
+
+
 def _clean_text(s: Optional[str]) -> str:
     return (s or "").strip()
+
+
+def trim_to_word_boundaries(text: str) -> str:
+    """
+    Evita comenzar o terminar en medio de una palabra.
+    Si el chunk viene partido, recorta al primer/último separador razonable.
+    """
+    t = _single_line(text)
+
+    # Si empieza “a mitad de palabra” (p.ej. 'e los ele-'), recortamos hasta el primer espacio
+    # cuando el primer token parece truncado (heurística suave).
+    if t and not t[0].isalnum():
+        t = t.lstrip(" -–—,.;:()[]{}")
+
+    # Recorta inicio a la primera separación si el primer “token” es raro
+    first_space = t.find(" ")
+    if 0 < first_space < 4:  # token inicial muy corto suele ser fragmento
+        t = t[first_space+1:].lstrip()
+
+    # Asegura cierre limpio: corta al último espacio/puntuación razonable
+    t = t.rstrip(" -–—,.;:()[]{}")
+    return t
+
+
+def build_excerpt(content: str, max_len: int = 380) -> str:
+    """
+    Crea un extracto de largo controlado, sin cortar palabra final.
+    """
+    t = trim_to_word_boundaries(content)
+    if len(t) <= max_len:
+        return f"<<{t}>>"
+
+    cut = t[:max_len]
+    # corta al último espacio cercano al final para no truncar palabra
+    last_space = cut.rfind(" ")
+    if last_space > max_len - 40:
+        cut = cut[:last_space].rstrip()
+    return f"<<{cut}{ELLIPSIS}>>"
+
 
 def format_sources_user_facing(documents: Iterable, max_sources: int = 5) -> str:
     """
@@ -125,76 +181,40 @@ def _format_source_line(
     )
 
 
-def build_sources_block_from_snippets(
-    snippets: List[Dict],
-    max_sources: int = 3,
-    max_chars_per_snippet: int = 350,
-) -> str:
+def build_sources_block_from_snippets(snippets: List[Dict], title: str = "Fuentes consultadas (enlaces + extractos):") -> str:
     """
-    Construye un bloque de texto plano con fuentes y enlaces, sin exponer
-    metadatos internos (batch_tag/source) ni puntajes de similitud.
-
-    Incluye un extracto textual acotado de cada fragmento usado, para que
-    la persona pueda verificar qué dice realmente el documento.
+    Render user-facing:
+    - NO incluye source (batch_tag) ni distance (relevancia aprox.)
+    - Incluye URL y extracto << >>
     """
     if not snippets:
         return ""
 
-    seen_docs = set()
-    lines: List[str] = []
-    any_truncated = False
-
+    lines = [title, ""]
+    # dedupe por document_id conservando orden
+    seen = set()
+    items = []
     for sn in snippets:
-        doc_key = (
-            sn.get("document_id"),
-            sn.get("title"),
-            sn.get("url"),
-        )
-        if doc_key in seen_docs:
+        doc_id = sn.get("document_id")
+        if doc_id in seen:
             continue
-        seen_docs.add(doc_key)
+        seen.add(doc_id)
+        items.append(sn)
 
-        title = sn.get("title") or "Documento sin título"
-        year = sn.get("year")
+    for i, sn in enumerate(items, start=1):
+        doc_title = sn.get("title") or "Documento sin título"
         url = (sn.get("url") or "").strip()
+        content = sn.get("content") or ""
+        excerpt = build_excerpt(content)
 
-        header = f"{len(seen_docs)}) {title}"
-        if year:
-            header += f" ({year})"
-        lines.append(header)
-
-        # URL clickeable en Telegram (texto plano)
+        lines.append(f"{i}) {doc_title}")
         if url:
             lines.append(url)
+        lines.append(f"Extracto: {excerpt}")
+        lines.append("")
 
-        content = _normalize_snippet_content(sn)
-        if content:
-            excerpt, truncated = _safe_excerpt(content, max_chars_per_snippet)
-            any_truncated = any_truncated or truncated
-
-            if excerpt:
-                lines.append(f"Extracto: «{excerpt}»")
-
-        lines.append("")  # separación visual
-
-        if len(seen_docs) >= max_sources:
-            break
-
-    while lines and lines[-1] == "":
-        lines.pop()
-
-    if not lines:
-        return ""
-
-    block = "\n\nFuentes consultadas (enlaces + extractos):\n\n" + "\n".join(lines).rstrip()
-
-    if any_truncated:
-        block += (
-            "\n\nNota: algunos extractos fueron recortados por extensión "
-            "(marcados con ...). Revisa el documento original si necesitas el párrafo completo."
-        )
-
-    return block
+    lines.append("Nota: algunos extractos fueron recortados por extensión (marcados con «…»). Revisa el documento original si necesitas el párrafo completo.")
+    return "\n".join(lines).strip()
 
 
 def _tokenize_spanish(text: str) -> List[str]:

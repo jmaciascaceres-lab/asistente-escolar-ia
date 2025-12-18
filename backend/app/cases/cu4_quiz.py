@@ -3,7 +3,7 @@ from typing import Tuple
 from ..rag_service import search_snippets
 from ..llm_client import generate_llm_answer, LLM_MODEL_NAME
 from ..llm_prompts import SYSTEM_PROMPT_TEACHER, build_cu4_user_prompt
-from ..utils_sources import build_sources_block_from_snippets, estimate_snippet_coverage, MIN_COVERAGE_RATIO
+from ..utils_sources import build_sources_block_from_snippets, estimate_snippet_coverage, MIN_COVERAGE_RATIO, infer_subject
 
 
 def _extract_quiz_query_from_msg(msg) -> str:
@@ -25,7 +25,16 @@ def quiz_con_llm(msg) -> Tuple[str, dict]:
     user_query = _extract_quiz_query_from_msg(msg)
 
     # 1) Recuperar snippets curriculares primero, luego fallback a todo
+    subject = infer_subject(user_query)
+
     snippets = search_snippets(user_query, filters={"doc_type": "curriculo"}, k=4)
+
+    if not snippets and subject:
+        snippets = search_snippets(user_query, filters={"doc_type": "curriculo", "subject": subject}, k=4)
+
+    if not snippets and subject:
+        snippets = search_snippets(user_query, filters={"subject": subject}, k=4)
+
     if not snippets:
         snippets = search_snippets(user_query, filters={}, k=4)
 

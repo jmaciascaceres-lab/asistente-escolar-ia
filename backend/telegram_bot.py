@@ -41,15 +41,17 @@ def send_message(chat_id: int, text: str) -> dict:
     return data
 
 
-def normalize_command(text: str) -> str | None:
+def normalize_command(cmd: str) -> str:
     """
-    Devuelve el comando normalizado (sin @BotName) o None si no hay comando.
-    Ej: "/quiz@MiBot tema" -> "/quiz"
+    Normaliza comandos Telegram:
+    - Quita @botname: /quiz@MiBot -> /quiz
+    - Fuerza minúsculas
     """
-    if not text.startswith("/"):
-        return None
-    cmd = text.split()[0].strip()
-    return cmd.split("@")[0]  # quita @BotName en grupos
+    cmd = (cmd or "").strip()
+    if not cmd.startswith("/"):
+        return cmd
+    cmd = cmd.split("@", 1)[0]
+    return cmd.lower()
 
 
 user_roles: Dict[int, str] = {}  # telegram_id -> role ("student", "teacher", etc.)
@@ -486,7 +488,10 @@ def main():
                     settings["extra"] = {**EXTRA_BASE_DOCENTES}
 
                 # Comando principal (si parte con "/")
-                command = normalize_command(text)
+                raw_cmd = text.split()[0] if text.split() else ""
+                command = normalize_command(raw_cmd)
+
+                print(f"[telegram_bot] incoming text={text!r} raw_cmd={raw_cmd!r} normalized_cmd={command!r} role={role}")
 
                 # 1) Mensaje preliminar para comandos "pesados" (usan RAG + LLM)
                 heavy_commands = {"/explicar", "/quiz", "/adaptar", "/resumen", "/fuente"}
