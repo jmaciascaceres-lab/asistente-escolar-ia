@@ -165,12 +165,12 @@ else:
     SYSTEM_PROMPT_TEACHER = SYSTEM_PROMPT_TEACHER_RELAXED
 
 
-def build_cu2_user_prompt(topic: str, context_text: str, low_stim: bool = False) -> str:
+def build_cu2_user_prompt(user_query: str, context_text: str, low_stim: bool = False) -> str:
     """
     Construye el prompt de usuario para el Caso de Uso 2 (Explicar contenido).
     """
     # Instrucción base
-    prompt = f"El estudiante quiere una explicación sobre: {topic}\n\n"
+    prompt = f"El estudiante quiere una explicación sobre: {user_query}\n\n"
 
     if context_text:
         prompt += f"Usa EXCLUSIVAMENTE la siguiente información de contexto (fragmentos):\n{context_text}\n\n"

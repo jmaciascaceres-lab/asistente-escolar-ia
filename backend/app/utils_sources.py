@@ -5,6 +5,7 @@ from typing import List, Dict, Tuple, Any, Optional, Iterable
 
 # Umbral configurable para marcar baja cobertura entre respuesta y fragmentos
 MIN_COVERAGE_RATIO = float(os.getenv("LLM_MIN_COVERAGE_RATIO", "0.03"))
+ELLIPSIS = "..."
 
 
 def infer_subject(query: str) -> Optional[str]:
