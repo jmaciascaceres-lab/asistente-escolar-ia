@@ -850,7 +850,7 @@ def generate_cu3_pie_for_caregiver(msg: MessageIn) -> str:
     snippets = [s for s in snippets_all if s.get("doc_type") in preferred_types][:1]
 
     if not snippets:
-    snippets = search_snippets("Programa de Integración Escolar", filters={}, k=1)
+        snippets = search_snippets("Programa de Integración Escolar", filters={}, k=1)
 
     intro = (
         "Te respondo de forma general sobre el Programa de Integración Escolar (PIE) "
