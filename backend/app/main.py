@@ -9,9 +9,7 @@ from .cases.cu2_explicar import explicar_con_llm
 from .cases.cu3_resumen import resumen_con_llm
 from .cases.cu4_quiz import quiz_con_llm
 from .cases.cu5_adaptar import adaptar_con_llm
-from .cases.cu6_reporte import generate_cu6_report, generate_cu6_apoyo_for_caregiver
-from .cases.cu7_resumen import generate_cu7_response
-from .cases.cu8_alerta import generate_cu8_alert_guidance
+
 
 from fastapi import FastAPI
 from pydantic import BaseModel, Field
