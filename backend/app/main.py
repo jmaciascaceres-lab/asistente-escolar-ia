@@ -1,5 +1,5 @@
 from enum import Enum
-import time
+import time, re
 import json
 from typing import Optional, List, Tuple    
 from .rag_service import search_documents, search_snippets, ingest_document
@@ -191,10 +191,11 @@ async def handle_message(msg: MessageIn):
     start = time.time()
 
     # Determinar case_id para logging
-    case_id = infer_case_id(msg.role, msg.command)
+    cmd = effective_cmd(msg)
+    case_id = infer_case_id(msg.role, cmd)
 
     # Placeholder de lógica: genera respuesta básica según CU
-    stub_result = generate_reply_stub(msg, case_id)
+    stub_result = generate_reply_stub(msg, case_id, cmd)
     (
         reply_text,
         used_rag,
@@ -393,6 +394,38 @@ def handle_safety_and_alerts(conn, user_id: int, msg: MessageIn) -> Tuple[bool, 
     )
 
     return True, reply
+
+
+def normalize_cmd(command: Optional[str]) -> str:
+    """
+    Normaliza comandos:
+    - strip + lower
+    - elimina sufijo @BotName (en grupos)
+    """
+    if not command:
+        return ""
+    cmd = command.strip().lower()
+    if cmd.startswith("/"):
+        cmd = cmd.split("@", 1)[0]
+    return cmd
+
+
+def effective_cmd(msg: "MessageIn") -> str:
+    """
+    Comando robusto:
+    - prioriza msg.command
+    - si viene vacío, intenta parsearlo desde msg.text
+    """
+    cmd = normalize_cmd(msg.command)
+    if cmd:
+        return cmd
+
+    text = (msg.text or "").strip()
+    if text.startswith("/"):
+        raw = text.split()[0]
+        return normalize_cmd(raw)
+
+    return ""
 
 
 def infer_case_id(role: UserRole, command: str) -> Optional[str]:
@@ -747,6 +780,26 @@ def generate_cu3_summary(msg: MessageIn) -> str:
     return intro + "\n".join(lines) + cierre
 
 
+def _pie_excerpt(text: str, max_chars: int = 260) -> str:
+    t = re.sub(r"\s+", " ", (text or "")).strip()
+
+    # Si parece empezar en un fragmento raro (chunk partido), intenta saltar el primer token muy corto
+    first = t.split(" ", 1)[0] if t else ""
+    if len(first) <= 2 and " " in t:
+        t = t.split(" ", 1)[1].lstrip()
+
+    if len(t) <= max_chars:
+        return f"<<{t}>>"
+
+    cut = t[: max_chars + 1]
+    last_space = cut.rfind(" ")
+    if last_space > int(max_chars * 0.6):
+        cut = cut[:last_space].rstrip()
+
+    cut = cut.rstrip(" ,;:.") + "…"
+    return f"<<{cut}>>"
+
+
 def generate_cu3_pie_for_caregiver(msg: MessageIn) -> str:
     """
     Versión de CU3 pensada para madres/padres/apoderados cuando usan /pie.
@@ -780,14 +833,15 @@ def generate_cu3_pie_for_caregiver(msg: MessageIn) -> str:
     ref_lines = ""
     if snippets:
         sn = snippets[0]
-        title = sn["title"]
-        source = sn.get("source") or "fuente interna"
-        content = sn["content"].replace("\n", " ")
-        preview = content[:260] + ("..." if len(content) > 260 else "")
+        title = sn.get("title") or "Documento sin título"
+        url = (sn.get("url") or "").strip()
+        excerpt = _pie_excerpt(sn.get("content") or "")
+
         ref_lines = (
-            "\nUn documento de referencia donde se habla de este tema es:\n"
-            f"- «{title}» ({source}).\n"
-            f"En uno de sus fragmentos se señala, en resumen: {preview}\n"
+            "\nDocumento de referencia:\n"
+            f"- {title}\n"
+            + (f"  {url}\n" if url else "")
+            + f"  Extracto: {excerpt}\n"
         )
     else:
         ref_lines = (
@@ -1172,7 +1226,7 @@ def generate_cu6_apoyo_for_caregiver(msg: MessageIn) -> str:
     return header + cuerpo + ref_lines + cierre
 
 
-def generate_reply_stub(msg: MessageIn, case_id: Optional[str]):
+def generate_reply_stub(msg: MessageIn, case_id: Optional[str], cmd: Optional[str]):
     """
     Por ahora, genera textos simples según case_id para probar el flujo.
     Más adelante aquí se invocará RAG + CAG + Safety.
@@ -1197,12 +1251,12 @@ def generate_reply_stub(msg: MessageIn, case_id: Optional[str]):
         llm_completion_tokens = llm_meta["llm_completion_tokens"]
     elif case_id == "CU3":
         used_rag = True
-        used_cag = True
-        if msg.role == UserRole.caregiver and msg.command == "/pie":
-            # Versión simple para familias, sin LLM (o con LLM más adelante)
+        # Opción 1: /pie (apoderado) SIEMPRE RAG-only
+        if msg.role == UserRole.caregiver and cmd == "/pie":
+            used_cag = False
             reply_text = generate_cu3_pie_for_caregiver(msg)
         else:
-            # Resumen para docentes/coord. u otros roles
+            used_cag = True
             reply_text, llm_meta = resumen_con_llm(msg)
             llm_model = llm_meta["llm_model"]
             llm_prompt_tokens = llm_meta["llm_prompt_tokens"]

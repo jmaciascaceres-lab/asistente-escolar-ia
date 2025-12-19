@@ -4,7 +4,7 @@ from typing import Tuple
 from ..rag_service import search_snippets
 from ..llm_client import generate_llm_answer, LLM_MODEL_NAME
 from ..llm_prompts import SYSTEM_PROMPT_STUDENT, build_cu2_user_prompt
-from ..utils_sources import build_sources_block_from_snippets, estimate_snippet_coverage, MIN_COVERAGE_RATIO
+from ..utils_sources import build_sources_block_from_snippets, estimate_snippet_coverage, MIN_COVERAGE_RATIO, infer_subject 
 
 
 def _extract_explanation_topic_from_msg(msg) -> str:
@@ -20,13 +20,22 @@ def explicar_con_llm(msg) -> Tuple[str, dict]:
     CU2: explicación de contenido para estudiantes con LLM + RAG.
     Retorna (texto_respuesta, llm_meta).
     """
-    topic = _extract_explanation_topic_from_msg(msg)
+    user_query = _extract_explanation_topic_from_msg(msg)
     low_stim = msg.settings.get("modo") == "baja"
 
     # 1) Recuperar snippets de currículo primero
-    snippets = search_snippets(topic, filters={"doc_type": "curriculo"}, k=4)
+    subject = infer_subject(user_query)
+
+    snippets = search_snippets(user_query, filters={"doc_type": "curriculo"}, k=4)
+
+    if not snippets and subject:
+        snippets = search_snippets(user_query, filters={"doc_type": "curriculo", "subject": subject}, k=4)
+
+    if not snippets and subject:
+        snippets = search_snippets(user_query, filters={"subject": subject}, k=4)
+
     if not snippets:
-        snippets = search_snippets(topic, filters={}, k=4)
+        snippets = search_snippets(user_query, filters={}, k=4)
 
     # 2) Construir contexto para el LLM
     context_blocks = []
@@ -40,7 +49,7 @@ def explicar_con_llm(msg) -> Tuple[str, dict]:
 
     # 3) Prompt específico para CU2
     user_prompt = build_cu2_user_prompt(
-        topic=topic,
+        user_query=user_query,
         context_text=context_text,
         low_stim=low_stim,
     )
