@@ -413,6 +413,42 @@ def normalize_cmd(command: Optional[str]) -> str:
     return cmd
 
 
+def parse_cmd_and_args(msg: "MessageIn") -> tuple[str, str]:
+    """
+    Devuelve (cmd_normalizado, args_str).
+    - soporta command=None (Swagger) y /cmd@BotName (grupos)
+    - args se toma desde msg.text (lo más estable)
+    """
+    cmd = effective_cmd(msg)  # ya normaliza /cmd@BotName
+    text = (msg.text or "").strip()
+
+    if not text:
+        return cmd, ""
+
+    # primer token del texto (podría venir /cmd@BotName)
+    first = text.split()[0] if text.split() else ""
+    first_norm = normalize_cmd(first)
+
+    # si el primer token parece comando, úsalo como cmd efectivo
+    if first_norm.startswith("/"):
+        cmd = first_norm
+
+    args = text[len(first):].strip() if first else ""
+    return cmd, args
+
+
+def parse_int_arg(args: str) -> Optional[int]:
+    """
+    Extrae un ID entero desde los args.
+    Soporta "12" o "12," o "12.".
+    """
+    if not args:
+        return None
+    m = re.search(r"\b(\d+)\b", args)
+    return int(m.group(1)) if m else None
+
+
+
 def effective_cmd(msg: "MessageIn") -> str:
     """
     Comando robusto:
@@ -471,11 +507,8 @@ def infer_case_id(role: UserRole, command: str) -> Optional[str]:
             return "CU6"
 
     if role == UserRole.coordinator:
-        if cmd == "/alertas":
+        if cmd in ("/alertas", "/detalle_alerta", "/alerta_en_revision", "/alerta_resuelta", "/alerta_ayuda"):
             return "CU8"
-        if cmd == "/alerta_ayuda":
-            return "CU8"
-
 
     # comandos genéricos (/start, /ayuda, etc.) o no mapeados
     return None
@@ -1290,10 +1323,25 @@ def generate_reply_stub(msg: MessageIn, case_id: Optional[str], cmd: Optional[st
         used_cag = False
         reply_text = generate_cu7_response(msg)
     elif case_id == "CU8":
-        used_rag = True
         used_cag = False
         sensitive_flag = False
-        reply_text = generate_cu8_alert_guidance(msg)
+        # CU8: algunos comandos usan RAG (solo /alerta_ayuda por referencias)
+        used_rag = True if cmd == "/alerta_ayuda" else False
+        if cmd == "/alertas":
+            reply_text = generate_cu8_list_alerts(msg)
+        elif cmd == "/detalle_alerta":
+            reply_text = generate_cu8_alert_detail(msg)
+        elif cmd == "/alerta_en_revision":
+            reply_text = generate_cu8_set_status(msg, "in_review")
+        elif cmd == "/alerta_resuelta":
+            reply_text = generate_cu8_set_status(msg, "resolved")
+        elif cmd == "/alerta_ayuda":
+            reply_text = generate_cu8_alert_guidance(msg)
+        else:
+            reply_text = (
+                "Comando CU8 no reconocido. Usa /alertas, /detalle_alerta ID, "
+                "/alerta_en_revision ID, /alerta_resuelta ID o /alerta_ayuda ID."
+            )
 
     else:
         # Mensaje especial si un rol no autorizado usa /fuente
@@ -1401,6 +1449,128 @@ def extract_alert_id_from_text(text: str, base_cmd: str) -> Optional[int]:
         return None
 
 
+def generate_cu8_list_alerts(msg: MessageIn) -> str:
+    if msg.role != UserRole.coordinator:
+        return (
+            "El comando /alertas está pensado para coordinadores o equipos de convivencia."
+        )
+
+    with get_db() as conn:
+        with conn.cursor() as cur:
+            cur.execute(
+                """
+                SELECT id, created_at, student_id, course_id, alert_type, status
+                FROM teacher_alerts
+                WHERE status = 'pending'
+                ORDER BY created_at DESC
+                LIMIT 20;
+                """
+            )
+            rows = cur.fetchall()
+
+    if not rows:
+        return "No hay alertas pendientes en este momento."
+
+    lines = ["Alertas pendientes (máx. 20):", ""]
+    for r in rows:
+        alert_id, created_at, student_id, course_id, alert_type, status = r
+        lines.append(
+            f"- ID {alert_id} | {alert_type} | estado={status} | curso_id={course_id} | {created_at.strftime('%Y-%m-%d %H:%M')}"
+        )
+
+    lines.append("")
+    lines.append("Usa /detalle_alerta ID para ver detalle.")
+    lines.append("Usa /alerta_en_revision ID o /alerta_resuelta ID para actualizar estado.")
+    return "\n".join(lines)
+
+
+def generate_cu8_alert_detail(msg: MessageIn) -> str:
+    if msg.role != UserRole.coordinator:
+        return (
+            "El comando /detalle_alerta está pensado para coordinadores o equipos de convivencia."
+        )
+
+    _, args = parse_cmd_and_args(msg)
+    alert_id = parse_int_arg(args)
+    if alert_id is None:
+        return "Uso esperado: /detalle_alerta ID (por ejemplo, /detalle_alerta 3)."
+
+    with get_db() as conn:
+        with conn.cursor() as cur:
+            cur.execute(
+                """
+                SELECT id, created_at, student_id, course_id, alert_type, status, summary, last_update
+                FROM teacher_alerts
+                WHERE id = %s;
+                """,
+                (alert_id,),
+            )
+            row = cur.fetchone()
+
+    if not row:
+        return f"No encontré la alerta con ID {alert_id}. Verifica el número e inténtalo nuevamente."
+
+    _id, created_at, student_id, course_id, alert_type, status, summary, last_update = row
+
+    out = (
+        f"Detalle de alerta ID {_id}\n\n"
+        f"- Tipo: {alert_type}\n"
+        f"- Estado: {status}\n"
+        f"- student_id: {student_id}\n"
+        f"- course_id: {course_id}\n"
+        f"- Creada: {created_at.strftime('%Y-%m-%d %H:%M')}\n"
+        f"- Última actualización: {last_update.strftime('%Y-%m-%d %H:%M') if last_update else '—'}\n\n"
+        "Resumen registrado (extracto):\n"
+        f"{(summary or '')[:800]}{'…' if summary and len(summary) > 800 else ''}\n\n"
+        "Acciones:\n"
+        f"• /alerta_en_revision {_id}\n"
+        f"• /alerta_resuelta {_id}\n"
+        f"• /alerta_ayuda {_id}\n"
+    )
+    return out
+
+
+def update_alert_status_db(alert_id: int, new_status: str) -> bool:
+    """
+    Actualiza estado de teacher_alerts.
+    Retorna True si se actualizó (rowcount > 0).
+    """
+    with get_db() as conn:
+        with conn.cursor() as cur:
+            cur.execute(
+                """
+                UPDATE teacher_alerts
+                SET status = %s,
+                    last_update = NOW()
+                WHERE id = %s;
+                """,
+                (new_status, alert_id),
+            )
+            return cur.rowcount > 0
+
+
+def generate_cu8_set_status(msg: MessageIn, new_status: str) -> str:
+    if msg.role != UserRole.coordinator:
+        return "Este comando está pensado para coordinadores o equipos de convivencia."
+
+    _, args = parse_cmd_and_args(msg)
+    alert_id = parse_int_arg(args)
+    if alert_id is None:
+        example = "/alerta_en_revision 3" if new_status == "in_review" else "/alerta_resuelta 3"
+        return f"Uso esperado: {example}"
+
+    ok = update_alert_status_db(alert_id, new_status)
+    if not ok:
+        return f"No encontré la alerta con ID {alert_id}. Verifica el número e inténtalo nuevamente."
+
+    label = "en revisión" if new_status == "in_review" else "resuelta"
+    return (
+        f"Listo. Alerta ID {alert_id} marcada como {label}.\n"
+        f"Puedes ver el detalle con: /detalle_alerta {alert_id}"
+    )
+
+
+
 def generate_cu8_alert_guidance(msg: MessageIn) -> str:
     """
     CU8 conversacional: orientaciones iniciales para coordinadores
@@ -1413,7 +1583,8 @@ def generate_cu8_alert_guidance(msg: MessageIn) -> str:
             "Si tienes dudas sobre una situación específica, conversa con el equipo del establecimiento."
         )
 
-    alert_id = extract_alert_id_from_text(msg.text, "/alerta_ayuda")
+    _, args = parse_cmd_and_args(msg)
+    alert_id = parse_int_arg(args)
     if alert_id is None:
         return "Uso esperado: /alerta_ayuda ID (por ejemplo, /alerta_ayuda 3)."
 
