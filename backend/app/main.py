@@ -9,9 +9,12 @@ from .cases.cu2_explicar import explicar_con_llm
 from .cases.cu3_resumen import resumen_con_llm
 from .cases.cu4_quiz import quiz_con_llm
 from .cases.cu5_adaptar import adaptar_con_llm
+from .cases.cu6_reporte import generate_cu6_report, generate_cu6_apoyo_for_caregiver
+from .cases.cu7_resumen import generate_cu7_response
+from .cases.cu8_alerta import generate_cu8_alert_guidance
 
 from fastapi import FastAPI
-from pydantic import BaseModel
+from pydantic import BaseModel, Field
 
 from .db import init_db, close_db, get_db
 
@@ -62,7 +65,7 @@ class MessageIn(BaseModel):
     command: Optional[str] = None   # 👈 antes era str
     text: str
     course_id: Optional[int] = None
-    settings: dict = {}
+    settings: dict = Field(default_factory=dict)
 
 
 class MessageOut(BaseModel):
@@ -74,7 +77,7 @@ class MessageOut(BaseModel):
 
 class RagQuery(BaseModel):
     query: str
-    filters: dict = {}   # ej: {"doc_type": "normativa_nacional"}
+    filters: dict = Field(default_factory=dict)   # ej: {"doc_type": "normativa_nacional"}
 
 
 class RagDocumentOut(BaseModel):
@@ -83,9 +86,9 @@ class RagDocumentOut(BaseModel):
     doc_type: str
     source: Optional[str] = None
     subject: Optional[str] = None
-    year: Optional[int] = None
+    year: Optional[int] = Field(default=None)
     url: Optional[str] = None
-    metadata: dict = {}
+    metadata: dict = Field(default_factory=dict)
 
 
 class RagSearchResult(BaseModel):
@@ -98,9 +101,9 @@ class RagIngestRequest(BaseModel):
     doc_type: str
     source: Optional[str] = None
     subject: Optional[str] = None
-    year: Optional[int] = None
+    year: Optional[int] = Field(default=None)
     url: Optional[str] = None
-    metadata: dict = {}
+    metadata: dict = Field(default_factory=dict)
 
 
 class HealthResponse(BaseModel):
@@ -223,7 +226,7 @@ async def handle_message(msg: MessageIn):
             user_id=user_id,
             role=msg.role,
             course_id=msg.course_id,
-            command=msg.command,
+            command=cmd,
             case_id=case_id,
             latency_ms=latency_ms,
             used_rag=used_rag,
@@ -808,14 +811,13 @@ def generate_cu3_pie_for_caregiver(msg: MessageIn) -> str:
     query = extract_pie_query(msg)
 
     # Buscamos fragmentos normativos o de inclusión.
-    preferred_types = ["normativa_nacional", "inclusion_autismo", "paec"]
-    snippets = []
-    for t in preferred_types:
-        snippets = search_snippets(query, filters={"doc_type": t}, k=1)
-        if snippets:
-            break
+    preferred_types = {"normativa_nacional", "inclusion_autismo", "paec"}
+
+    snippets_all = search_snippets(query, filters={}, k=8)
+    snippets = [s for s in snippets_all if s.get("doc_type") in preferred_types][:1]
+
     if not snippets:
-        snippets = search_snippets("Programa de Integración Escolar", filters={}, k=1)
+    snippets = search_snippets("Programa de Integración Escolar", filters={}, k=1)
 
     intro = (
         "Te respondo de forma general sobre el Programa de Integración Escolar (PIE) "
@@ -1240,7 +1242,7 @@ def generate_reply_stub(msg: MessageIn, case_id: Optional[str], cmd: Optional[st
     llm_completion_tokens = None
 
     if case_id == "CU1":
-        used_cag = True
+        used_cag = False
         reply_text = generate_cu1_plan(msg)
     elif case_id == "CU2":
         used_rag = True
@@ -1276,26 +1278,26 @@ def generate_reply_stub(msg: MessageIn, case_id: Optional[str], cmd: Optional[st
         llm_prompt_tokens = llm_meta["llm_prompt_tokens"]
         llm_completion_tokens = llm_meta["llm_completion_tokens"]
     elif case_id == "CU6":
-        if msg.command == "/reporte_semana":
+        if cmd == "/reporte_semana":
             used_cag = True
             reply_text = generate_cu6_report(msg)
-        elif msg.command == "/apoyo" and msg.role == UserRole.caregiver:
-            used_rag = True
-            used_cag = True
+        elif cmd == "/apoyo" and msg.role == UserRole.caregiver:
+            used_rag = False
+            used_cag = False
             reply_text = generate_cu6_apoyo_for_caregiver(msg)
     elif case_id == "CU7":
         used_rag = True
-        used_cag = True
+        used_cag = False
         reply_text = generate_cu7_response(msg)
     elif case_id == "CU8":
         used_rag = True
-        used_cag = True
+        used_cag = False
         sensitive_flag = False
         reply_text = generate_cu8_alert_guidance(msg)
 
     else:
         # Mensaje especial si un rol no autorizado usa /fuente
-        if msg.command == "/fuente" and msg.role not in (UserRole.teacher, UserRole.coordinator):
+        if cmd == "/fuente" and msg.role not in (UserRole.teacher, UserRole.coordinator):
             reply_text = (
                 "El comando /fuente está pensado para docentes y equipos de convivencia. "
                 "Si eres profesor o encargada/o de convivencia, puedes configurar tu rol con "
@@ -1680,11 +1682,15 @@ def extract_adapt_request(msg: MessageIn) -> str:
     return text or "esta actividad"
 
 def extract_pie_query(msg: MessageIn) -> str:
-    text = msg.text.strip()
+    text = (msg.text or "").strip()
+    base = "Programa de Integración Escolar (PIE)"
+
     if text.startswith("/pie"):
         rest = text[len("/pie"):].strip()
-        return rest or "Programa de Integración Escolar (PIE)"
-    return text or "Programa de Integración Escolar (PIE)"
+        # ancla siempre el tópico PIE, aunque haya pregunta
+        return f"{base}. {rest}".strip() if rest else base
+
+    return f"{base}. {text}".strip() if text else base
 
 def extract_apoyo_situation(msg: MessageIn) -> str:
     text = msg.text.strip()
