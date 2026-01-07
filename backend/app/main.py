@@ -1,6 +1,6 @@
 from enum import Enum
 import time, re, unicodedata
-import json
+import json, os
 from typing import Optional, List, Tuple, Dict    
 from .rag_service import search_documents, search_snippets, ingest_document
 from .utils_sources import _safe_excerpt

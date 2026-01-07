@@ -48,7 +48,7 @@ def explicar_con_llm(msg) -> Tuple[str, dict]:
     context_text = "\n\n".join(context_blocks)
 
     # 3) Prompt específico para CU2
-    user_prompt = build_cu2_user_prompt(|
+    user_prompt = build_cu2_user_prompt(
         user_query=user_query,
         context_text=context_text,
         mode=mode,

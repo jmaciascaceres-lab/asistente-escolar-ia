@@ -492,6 +492,7 @@ def main():
                 command = normalize_command(raw_cmd)
 
                 print(f"[telegram_bot] incoming text={text!r} raw_cmd={raw_cmd!r} normalized_cmd={command!r} role={role}")
+                print(f"[backend] role={role} command={command} text_first={text.split()[0] if text else None}")
 
                 # 1) Mensaje preliminar para comandos "pesados" (usan RAG + LLM)
                 heavy_commands = {"/explicar", "/quiz", "/adaptar", "/resumen", "/fuente"}
@@ -514,7 +515,7 @@ def main():
                 t0 = time.time()
                 try:
                     resp = requests.post(
-                        BACKEND_URL, json=backend_payload, timeout=200
+                        BACKEND_URL, json=backend_payload, timeout=120
                     )
                     elapsed = time.time() - t0
 
