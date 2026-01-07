@@ -1,7 +1,7 @@
 from enum import Enum
-import time, re
+import time, re, unicodedata
 import json
-from typing import Optional, List, Tuple    
+from typing import Optional, List, Tuple, Dict    
 from .rag_service import search_documents, search_snippets, ingest_document
 from .utils_sources import _safe_excerpt
 
@@ -367,6 +367,21 @@ async def update_alert_status(alert_id: int, req: AlertStatusUpdateRequest):
 
 
 # ---------- Helpers de lógica / orquestador mínimo ----------
+
+def _normalize(text: str) -> str:
+    # minúsculas
+    t = text.lower()
+
+    # quitar tildes/diacríticos
+    t = unicodedata.normalize("NFKD", t)
+    t = "".join(ch for ch in t if not unicodedata.combining(ch))
+
+    # colapsar caracteres repetidos (nooooo -> noo)
+    t = re.sub(r"(.)\1{3,}", r"\1\1", t)
+
+    # normalizar espacios
+    t = re.sub(r"\s+", " ", t).strip()
+    return t
 
 def handle_safety_and_alerts(conn, user_id: int, msg: MessageIn) -> Tuple[bool, Optional[str]]:
     """
@@ -1647,77 +1662,94 @@ def generate_cu8_alert_guidance(msg: MessageIn) -> str:
     return header + ref_lines + cierre
 
 
-def detect_sensitive_categories(text: str) -> list[str]:
+def detect_sensitive_categories(text: str) -> List[str]:
     """
     Detector simple de categorías sensibles.
     No es un sistema de clasificación clínico, solo un primer filtro.
     """
-    t = text.lower()
-    cats: list[str] = []
+    t = _normalize(text)
+    cats: List[str] = []
 
-    # ---- Riesgo de autolesión / ideación suicida ----
-    suicidio_patterns = [
-        "no quiero vivir",
-        "no quiero seguir viviendo",
-        "me quiero morir",
-        "me quiero matar",
-        "quiero matarme",
-        "quiero hacerme daño",
-        "quiero dañarme",
-        "quiero cortarme",
-        "no aguanto más vivir",
-    ]
-    if any(p in t for p in suicidio_patterns):
-        cats.append("riesgo_autolesion")
+    patterns: Dict[str, List[str]] = {
+        # ---- Riesgo de autolesión / ideación suicida ----
+        "riesgo_autolesion": [
+            r"\bno quiero (seguir viviendo|vivir)\b",
+            r"\b(me )?quiero (morir|matar|matarme|suicidar|suicidarme)\b",
+            r"\b(voy|me voy) a (matarme|suicidarme)\b",
+            r"\b(quiero|me quiero) quitar(me)? la vida\b",
+            r"\b(acabar|terminar) con todo\b",
+            r"\bno puedo mas\b",
+            r"\bno aguanto mas\b",
+            r"\bquisiera (dormirme|desaparecer) (y )?no despertar\b",
+            r"\bseria mejor (morir|estar muerto)\b",
+            r"\b(no tiene sentido|no vale la pena) vivir\b",
+            r"\bme (corto|corte|estoy cortando|autolesiono|hago dano)\b",
+            r"\b(autolesion|ideacion suicida|pensamientos suicidas)\b",
+            r"\b(cortarme las venas)\b",
+            r"\b(esta es mi despedida|me despedi de todos|deje una carta)\b",
+        ],
 
-    # ---- Autodesprecio intenso (vigilar como factor de riesgo) ----
-    auto_odio_patterns = [
-        "me odio a mí mismo",
-        "me odio a mi mismo",
-        "me odio",
-        "soy una basura",
-        "no valgo nada",
-    ]
-    if any(p in t for p in auto_odio_patterns) and "riesgo_autolesion" not in cats:
-        cats.append("malestar_emocional_intenso")
+        # ---- Malestar emocional intenso ----
+        "malestar_emocional_intenso": [
+            r"\bme odio\b",
+            r"\b(me doy asco|me detesto)\b",
+            r"\bsoy (una )?(basura|asco|estorbo|inutil|un fracaso|un perdedor)\b",
+            r"\bno (valgo|sirvo) (nada|para nada)?\b",
+            r"\bnadie me quiere\b",
+            r"\ba nadie le importo\b",
+            r"\b(no merezco vivir)\b",
+            r"\b(estoy deprimid[oa]|estoy en depresion)\b",
+            r"\bme siento vaci[oa]\b",
+        ],
 
-    # ---- Violencia familiar / maltrato en casa ----
-    violencia_familiar_patterns = [
-        "me pegan en la casa",
-        "me golpean en la casa",
-        "me pegan mis papás",
-        "me pegan mis padres",
-        "mi papá me golpea",
-        "mi mamá me golpea",
-        "en mi casa me pegan",
-    ]
-    if any(p in t for p in violencia_familiar_patterns):
-        cats.append("violencia_familiar")
+        # ---- Violencia familiar / maltrato en casa ----
+        "violencia_familiar": [
+            r"\b(me pegan|me golpean)\b.*\b(casa|hogar)\b",
+            r"\ben mi casa (me pegan|me golpean)\b",
+            r"\bmi (papa|mama|padre|madre|padrastro|madrastra)\b.*\b(me pega|me golpea)\b",
+            r"\b(me patearon|me empujaron|me tiraron|me agarraron a golpes)\b",
+            r"\b(me amenazan|me amenazaron)\b.*\b(casa|hogar|mi papa|mi mama)\b",
+            r"\b(violencia intrafamiliar|vif|maltrato)\b",
+            r"\b(me insultan|me humillan|me gritan)\b.*\b(casa|hogar)\b",
+        ],
 
-    # ---- Posible abuso sexual (descriptores muy generales) ----
-    abuso_patterns = [
-        "me tocan sin permiso",
-        "me tocan partes íntimas",
-        "me obligan a tocar",
-        "me obligan a hacer cosas sexuales",
-        "me obligan a enviar fotos",
-    ]
-    if any(p in t for p in abuso_patterns):
-        cats.append("posible_abuso_sexual")
+        # ---- Posible abuso sexual / grooming ----
+        "posible_abuso_sexual": [
+            r"\b(abuso sexual|me abusaron|abusaron de mi)\b",
+            r"\b(me violaron|me violo)\b",
+            r"\b(me tocan|tocamientos|me manosean)\b.*\b(sin permiso|partes intimas)?\b",
+            r"\b(me obligan|me obligaron|me forzaron)\b.*\b(sexo|cosas sexuales)\b",
+            r"\b(me piden|me pidieron)\b.*\b(fotos intimas|nudes|pack)\b",
+            r"\b(sextorsion|sextorsion)\b",
+            r"\b(grooming)\b",
+            r"\b(me chantajean)\b.*\b(fotos|videos)\b",
+            r"\b(me dijo|me pidio)\b.*\b(no le diga(s)? a nadie|que es secreto)\b",
+        ],
 
-    # ---- Acoso escolar / bullying ----
-    bullying_patterns = [
-        "me hacen bullying",
-        "me molestan siempre",
-        "me molestan todos los días",
-        "me pegan en el colegio",
-        "me amenazan en el curso",
-        "me insultan en el curso",
-    ]
-    if any(p in t for p in bullying_patterns):
-        cats.append("acoso_escolar")
+        # ---- Acoso escolar / bullying (incl. ciber) ----
+        "acoso_escolar": [
+            r"\b(me hacen bullying|acoso escolar)\b",
+            r"\b(me molestan|se burlan de mi|me insultan)\b",
+            r"\b(me pegan|me golpean)\b.*\b(colegio|curso|escuela|liceo)\b",
+            r"\b(me amenazan)\b.*\b(curso|colegio|escuela|liceo)\b",
+            r"\b(me excluyen|me hacen el vacio|me ignoran)\b",
+            r"\b(me roban)\b.*\b(cosas|cuaderno|mochila)\b",
+            r"\b(me webean|me webearon|me agarran pal webeo)\b",
+            r"\b(ciberbullying|me acosan por redes|me funan|me doxxearon|publicaron mis datos)\b",
+        ],
+    }
+
+    # 1) match por categoría
+    for cat, pats in patterns.items():
+        if any(re.search(p, t) for p in pats):
+            cats.append(cat)
+
+    # 2) regla simple de prioridad: si hay autolesión, no duplicar “malestar” (opcional)
+    if "riesgo_autolesion" in cats and "malestar_emocional_intenso" in cats:
+        cats.remove("malestar_emocional_intenso")
 
     return cats
+    
 
 def create_teacher_alert(
     conn,
