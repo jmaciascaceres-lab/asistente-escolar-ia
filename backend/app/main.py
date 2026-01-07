@@ -32,6 +32,10 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
+STIMULATION_DEFAULT = os.getenv("STIMULATION_DEFAULT", "alto").strip().lower()
+if STIMULATION_DEFAULT not in ("alto", "bajo"):
+    STIMULATION_DEFAULT = "alto"
+
 
 # ---------- Eventos de ciclo de vida ----------
 
@@ -183,20 +187,118 @@ async def rag_search(payload: RagQuery):
 @app.post("/api/v1/messages", response_model=MessageOut)
 async def handle_message(msg: MessageIn):
     """
-    Punto central de orquestación por ahora:
-    - upsert de usuario
-    - mapeo comando+rol -> case_id
-    - generación de respuesta placeholder
-    - registro en interaction_logs
+    Punto central de orquestación:
+    - determina cmd/case_id
+    - merge settings (persistentes por usuario)
+    - soporta /modo baja|alta (persistente)
+    - ejecuta CU correspondiente
+    - safety + logging en interaction_logs
     """
     start = time.time()
 
-    # Determinar case_id para logging
-    cmd = effective_cmd(msg)
+    # 1) cmd/case_id temprano
+    cmd, args = parse_cmd_and_args(msg)
     case_id = infer_case_id(msg.role, cmd)
 
-    # Placeholder de lógica: genera respuesta básica según CU
-    stub_result = generate_reply_stub(msg, case_id, cmd)
+    # 2) Merge settings con BD + soporte /modo (persistente)
+    #    Nota: hacemos 2 fases DB (set/merge usuario) -> ejecutar CU -> log/safety
+    with get_db() as conn:
+        db_settings = get_user_settings(conn, msg.telegram_id)
+        effective_settings = merge_settings(db_settings, msg.settings)
+
+        # Si venía vacío, dejamos default explícito
+        effective_settings.setdefault("modo", "alta")
+
+        # 2.a) /modo baja|alta: set persistente y respuesta inmediata
+        if cmd == "/modo":
+            new_mode = parse_stimulation_mode(args)
+
+            if not new_mode:
+                current = effective_settings.get("modo", "alta")
+                reply_text = (
+                    "Uso: /modo baja | /modo alta\n"
+                    "Ejemplos:\n"
+                    "• /modo baja\n"
+                    "• /modo alta\n"
+                    f"Modo actual: {current}"
+                )
+
+                # registrar interacción (sin CU)
+                msg_eff = msg.copy(update={"settings": effective_settings, "command": cmd})
+                user_id = upsert_user(conn, msg_eff)
+                log_interaction(
+                    conn,
+                    user_id=user_id,
+                    role=msg_eff.role,
+                    course_id=msg_eff.course_id,
+                    command=cmd,
+                    case_id=None,
+                    latency_ms=int((time.time() - start) * 1000),
+                    used_rag=False,
+                    used_cag=False,
+                    sensitive_flag=False,
+                    raw_query=msg_eff.text,
+                    raw_reply=reply_text,
+                    experiment_tag=effective_settings.get("experiment_tag"),
+                    extra=effective_settings.get("extra"),
+                    llm_model=None,
+                    llm_prompt_tokens=None,
+                    llm_completion_tokens=None,
+                )
+
+                return MessageOut(
+                    reply_text=reply_text,
+                    case_id=None,
+                    used_rag=False,
+                    used_cag=False,
+                    sensitive_flag=False,
+                )
+
+            # set efectivo + persistir
+            effective_settings["modo"] = new_mode
+
+            msg_eff = msg.copy(update={"settings": effective_settings, "command": cmd})
+            user_id = upsert_user(conn, msg_eff)
+
+            reply_text = (
+                f"Listo. Activé el modo de {'baja' if new_mode == 'baja' else 'alta'} estimulación.\n"
+                "A partir de ahora, mis respuestas se ajustarán a este modo.\n"
+                "Puedes cambiarlo cuando quieras con /modo baja o /modo alta."
+            )
+
+            log_interaction(
+                conn,
+                user_id=user_id,
+                role=msg_eff.role,
+                course_id=msg_eff.course_id,
+                command=cmd,
+                case_id=None,
+                latency_ms=int((time.time() - start) * 1000),
+                used_rag=False,
+                used_cag=False,
+                sensitive_flag=False,
+                raw_query=msg_eff.text,
+                raw_reply=reply_text,
+                experiment_tag=effective_settings.get("experiment_tag"),
+                extra=effective_settings.get("extra"),
+                llm_model=None,
+                llm_prompt_tokens=None,
+                llm_completion_tokens=None,
+            )
+
+            return MessageOut(
+                reply_text=reply_text,
+                case_id=None,
+                used_rag=False,
+                used_cag=False,
+                sensitive_flag=False,
+            )
+
+        # 2.b) flujo normal: persistimos settings mergeados ANTES del CU
+        msg_eff = msg.copy(update={"settings": effective_settings, "command": cmd})
+        user_id = upsert_user(conn, msg_eff)
+
+    # 3) Ejecutar CU (ya con settings efectivos)
     (
         reply_text,
         used_rag,
@@ -204,33 +306,34 @@ async def handle_message(msg: MessageIn):
         sensitive_flag,
         llm_model,
         llm_prompt_tokens,
-        llm_completion_tokens
-    ) = stub_result
+        llm_completion_tokens,
+    ) = generate_reply_stub(msg_eff, case_id, cmd)
 
     latency_ms = int((time.time() - start) * 1000)
 
-    # Persistir en BD
+    # 4) Safety + logging (segunda fase DB)
     with get_db() as conn:
-        user_id = upsert_user(conn, msg)
-        sensitive_flag_override, reply_override = handle_safety_and_alerts(conn, user_id, msg)
+        sensitive_flag_override, reply_override = handle_safety_and_alerts(conn, user_id, msg_eff)
         if reply_override:
             reply_text = reply_override
         if sensitive_flag_override:
             sensitive_flag = True
-        experiment_tag = msg.settings.get("experiment_tag")
-        extra = msg.settings.get("extra")
+
+        experiment_tag = msg_eff.settings.get("experiment_tag")
+        extra = msg_eff.settings.get("extra")
+
         log_interaction(
             conn,
             user_id=user_id,
-            role=msg.role,
-            course_id=msg.course_id,
+            role=msg_eff.role,
+            course_id=msg_eff.course_id,
             command=cmd,
             case_id=case_id,
             latency_ms=latency_ms,
             used_rag=used_rag,
             used_cag=used_cag,
             sensitive_flag=sensitive_flag,
-            raw_query=msg.text,
+            raw_query=msg_eff.text,
             raw_reply=reply_text,
             experiment_tag=experiment_tag,
             extra=extra,
@@ -367,6 +470,28 @@ async def update_alert_status(alert_id: int, req: AlertStatusUpdateRequest):
 
 
 # ---------- Helpers de lógica / orquestador mínimo ----------
+
+def get_user_settings_db(conn, telegram_id: int) -> dict:
+    with conn.cursor() as cur:
+        cur.execute("SELECT settings FROM users WHERE telegram_id = %s;", (telegram_id,))
+        row = cur.fetchone()
+        return row[0] or {} if row else {}
+
+
+def set_user_mode_db(conn, telegram_id: int, mode: str) -> None:
+    mode = (mode or "").strip().lower()
+    if mode not in ("alto", "bajo"):
+        raise ValueError("modo inválido")
+    with conn.cursor() as cur:
+        cur.execute(
+            """
+            UPDATE users
+            SET settings = COALESCE(settings, '{}'::jsonb) || %s::jsonb,
+                updated_at = NOW()
+            WHERE telegram_id = %s;
+            """,
+            (json.dumps({"modo": mode}), telegram_id),
+        )
 
 def _normalize(text: str) -> str:
     # minúsculas
@@ -1769,6 +1894,79 @@ def create_teacher_alert(
 
 # ---------- Helpers de BD ----------
 
+def _coerce_settings(value) -> dict:
+    """
+    Normaliza settings desde DB (jsonb) o desde request.
+    Soporta dict, None, o string JSON.
+    """
+    if value is None:
+        return {}
+    if isinstance(value, dict):
+        return value
+    if isinstance(value, str):
+        try:
+            return json.loads(value) or {}
+        except Exception:
+            return {}
+    return {}
+
+
+def get_user_settings(conn, telegram_id: int) -> dict:
+    """
+    Obtiene settings actuales del usuario (si existe) desde BD.
+    """
+    with conn.cursor() as cur:
+        cur.execute(
+            "SELECT settings FROM users WHERE telegram_id = %s;",
+            (telegram_id,),
+        )
+        row = cur.fetchone()
+    if not row:
+        return {}
+    return _coerce_settings(row[0])
+
+
+def merge_settings(db_settings: dict, incoming_settings: dict) -> dict:
+    """
+    Merge superficial + merge suave de sub-dict 'extra'.
+    Regla: incoming pisa db, excepto 'extra' que se fusiona.
+    """
+    base = dict(_coerce_settings(db_settings))
+    inc = dict(_coerce_settings(incoming_settings))
+
+    # merge normal
+    out = {**base, **inc}
+
+    # merge de 'extra' (si ambos son dict)
+    b_extra = base.get("extra")
+    i_extra = inc.get("extra")
+    if isinstance(b_extra, dict) and isinstance(i_extra, dict):
+        out["extra"] = {**b_extra, **i_extra}
+    elif i_extra is None and isinstance(b_extra, dict):
+        out["extra"] = b_extra
+
+    return out
+
+
+def parse_stimulation_mode(args: str) -> str | None:
+    """
+    Parsea /modo baja|alta (acepta sinónimos simples).
+    Retorna 'baja' | 'alta' o None si no calza.
+    """
+    a = (args or "").strip().lower()
+    if not a:
+        return None
+
+    token = a.split()[0]
+
+    if token in ("baja", "low", "lowstim", "low_stim"):
+        return "baja"
+    if token in ("alta", "high", "highstim", "high_stim"):
+        return "alta"
+
+    return None
+
+
 def upsert_user(conn, msg: MessageIn) -> int:
     """
     Inserta o actualiza el usuario según telegram_id.
@@ -1782,7 +1980,7 @@ def upsert_user(conn, msg: MessageIn) -> int:
             ON CONFLICT (telegram_id) DO UPDATE
             SET role = EXCLUDED.role,
                 course_id = COALESCE(EXCLUDED.course_id, users.course_id),
-                settings = EXCLUDED.settings,
+                settings = COALESCE(users.settings, '{}'::jsonb) || EXCLUDED.settings,
                 updated_at = NOW()
             RETURNING id;
             """,

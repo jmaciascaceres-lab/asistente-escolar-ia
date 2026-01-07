@@ -21,7 +21,7 @@ def explicar_con_llm(msg) -> Tuple[str, dict]:
     Retorna (texto_respuesta, llm_meta).
     """
     user_query = _extract_explanation_topic_from_msg(msg)
-    low_stim = msg.settings.get("modo") == "baja"
+    mode = msg.settings.get("modo", "alto")
 
     # 1) Recuperar snippets de currículo primero
     subject = infer_subject(user_query)
@@ -48,10 +48,10 @@ def explicar_con_llm(msg) -> Tuple[str, dict]:
     context_text = "\n\n".join(context_blocks)
 
     # 3) Prompt específico para CU2
-    user_prompt = build_cu2_user_prompt(
+    user_prompt = build_cu2_user_prompt(|
         user_query=user_query,
         context_text=context_text,
-        low_stim=low_stim,
+        mode=mode,
     )
 
     # 3) LLM

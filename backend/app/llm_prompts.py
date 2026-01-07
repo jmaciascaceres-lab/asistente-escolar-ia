@@ -165,7 +165,7 @@ else:
     SYSTEM_PROMPT_TEACHER = SYSTEM_PROMPT_TEACHER_RELAXED
 
 
-def build_cu2_user_prompt(user_query: str, context_text: str, low_stim: bool = False) -> str:
+def build_cu2_user_prompt(user_query: str, context_text: str, low_stim: bool = False, mode: str = "alto") -> str:
     """
     Construye el prompt de usuario para el Caso de Uso 2 (Explicar contenido).
     """
@@ -173,23 +173,19 @@ def build_cu2_user_prompt(user_query: str, context_text: str, low_stim: bool = F
     prompt = f"El estudiante quiere una explicación sobre: {user_query}\n\n"
 
     if context_text:
-        prompt += f"Usa EXCLUSIVAMENTE la siguiente información de contexto (fragmentos):\n{context_text}\n\n"
+        prompt += (
+            "Usa EXCLUSIVAMENTE la siguiente información de contexto (fragmentos):\n"
+            f"{context_text}\n\n"
+        )
     else:
         prompt += "No hay fragmentos de contexto disponibles. Recuerda las instrucciones sobre incertidumbre.\n\n"
 
-    # Instrucción adicional si es baja estimulación (low_stim)
-    if low_stim:
-        prompt += (
-            "NOTA: El estudiante tiene perfil de 'Baja Estimulación Sensorial'. "
-            "Esto significa que la respuesta debe ser muy calmada, sin exclamaciones, "
-            "con párrafos breves y estructura muy ordenada. Evita lenguaje emotivo intenso.\n\n"
-        )
-
-    prompt += "Genera la explicación a continuación:"
+    prompt += stimulation_note(mode)
+    prompt += "\nGenera la explicación a continuación:"
     return prompt
 
 
-def build_cu3_user_prompt(query: str, context_text: str) -> str:
+def build_cu3_user_prompt(query: str, context_text: str, mode: str = "alto") -> str:
     """
     Construye el prompt de usuario para el Caso de Uso 3 (Resumen para docentes).
     """
@@ -199,11 +195,12 @@ def build_cu3_user_prompt(query: str, context_text: str) -> str:
     else:
         prompt += "No hay fragmentos de contexto disponibles. Recuerda las instrucciones sobre incertidumbre.\n\n"
 
-    prompt += "Genera el resumen o respuesta a continuación:"
+    prompt += stimulation_note(mode)
+    prompt += "\nGenera el resumen o respuesta a continuación:"
     return prompt
 
 
-def build_cu4_user_prompt(user_query: str, context_text: str) -> str:
+def build_cu4_user_prompt(user_query: str, context_text: str, mode: str = "alto") -> str:
     """
     Construye el prompt de usuario para el Caso de Uso 4 (Quiz/Evaluación).
     """
@@ -213,11 +210,12 @@ def build_cu4_user_prompt(user_query: str, context_text: str) -> str:
     else:
         prompt += "No hay fragmentos de contexto disponibles. Recuerda las instrucciones sobre incertidumbre.\n\n"
 
-    prompt += "Genera la propuesta de preguntas a continuación:"
+    prompt += stimulation_note(mode)
+    prompt += "\nGenera la propuesta de preguntas a continuación:"
     return prompt
 
 
-def build_cu5_user_prompt(request_text: str, context_text: str) -> str:
+def build_cu5_user_prompt(request_text: str, context_text: str, mode: str = "alto") -> str:
     """
     Construye el prompt de usuario para el Caso de Uso 5 (Adaptación DUA).
     """
@@ -227,5 +225,25 @@ def build_cu5_user_prompt(request_text: str, context_text: str) -> str:
     else:
         prompt += "No hay fragmentos de contexto disponibles. Recuerda las instrucciones sobre incertidumbre.\n\n"
 
-    prompt += "Genera sugerencias de adaptación (considerando DUA si aplica) a continuación:"
+    prompt += stimulation_note(mode)
+    prompt += "\nGenera sugerencias de adaptación (considerando DUA si aplica) a continuación:"
     return prompt
+
+
+def stimulation_note(mode: str = "alto") -> str:
+    m = (mode or "alto").strip().lower()
+    if m == "bajo":
+        return (
+            "\n\nNOTA DE ESTILO (modo baja estimulación):\n"
+            "- Mantén un tono muy calmado, sin exclamaciones.\n"
+            "- Párrafos breves (2–3 líneas), estructura ordenada.\n"
+            "- Evita lenguaje emotivo intenso.\n"
+            "- Usa pasos numerados simples y ejemplos suaves.\n"
+        )
+    # alto (default)
+    return (
+        "\n\nNOTA DE ESTILO (modo alta estimulación):\n"
+        "- Mantén un tono motivador y claro.\n"
+        "- Puedes usar 1 ejemplo cotidiano y 1 mini-pregunta de verificación.\n"
+        "- Mantén estructura ordenada, sin sobrecargar.\n"
+    )
