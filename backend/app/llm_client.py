@@ -41,8 +41,8 @@ def generate_llm_answer(
         max_output_tokens=max_new_tokens,
     )
 
-    max_retries = 3
-    base_delay = 20.0  # Segundos
+    max_retries = 5
+    base_delay = 60.0  # Segundos
 
     for attempt in range(max_retries + 1):
         try:

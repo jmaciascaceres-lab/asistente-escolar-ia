@@ -182,7 +182,7 @@ def _format_source_line(
     )
 
 
-def build_sources_block_from_snippets(snippets: List[Dict], title: str = "\n\nFuentes consultadas (enlaces + extractos):") -> str:
+def build_sources_block_from_snippets(snippets: List[Dict], title: str = "Fuentes consultadas (enlaces + extractos):") -> str:
     """
     Render user-facing:
     - NO incluye source (batch_tag) ni distance (relevancia aprox.)
