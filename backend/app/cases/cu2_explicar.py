@@ -1,10 +1,18 @@
 # backend/app/cases/cu2_explicar.py
 from typing import Tuple
 
+import os
+
 from ..rag_service import search_snippets
 from ..llm_client import generate_llm_answer
 from ..llm_prompts import SYSTEM_PROMPT_STUDENT, build_cu2_user_prompt
 from ..utils_sources import build_sources_block_from_snippets, estimate_snippet_coverage, MIN_COVERAGE_RATIO, infer_subject 
+
+RAG_ENABLED = os.getenv("RAG_ENABLED", "true").lower() in ("1", "true", "yes")
+
+snippets = []
+if RAG_ENABLED:
+    snippets = search_snippets(user_query, filters=filters, k=5)
 
 
 def _extract_explanation_topic_from_msg(msg) -> str:

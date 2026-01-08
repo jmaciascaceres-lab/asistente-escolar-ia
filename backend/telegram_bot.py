@@ -515,7 +515,7 @@ def main():
                 t0 = time.time()
                 try:
                     resp = requests.post(
-                        BACKEND_URL, json=backend_payload, timeout=120
+                        BACKEND_URL, json=backend_payload, timeout=(10, 300)
                     )
                     elapsed = time.time() - t0
 

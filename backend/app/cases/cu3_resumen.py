@@ -1,9 +1,17 @@
 from typing import Tuple
 
+import os
+
 from ..rag_service import search_snippets
 from ..llm_client import generate_llm_answer
 from ..llm_prompts import SYSTEM_PROMPT_TEACHER, build_cu3_user_prompt
 from ..utils_sources import build_sources_block_from_snippets, estimate_snippet_coverage, MIN_COVERAGE_RATIO
+
+RAG_ENABLED = os.getenv("RAG_ENABLED", "true").lower() in ("1", "true", "yes")
+
+snippets = []
+if RAG_ENABLED:
+    snippets = search_snippets(user_query, filters=filters, k=5)
 
 
 def _extract_resumen_query_from_msg(msg) -> str:

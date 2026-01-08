@@ -38,7 +38,6 @@ services:
     environment:
       - DATABASE_URL=postgresql://postgres:postgres@db:5432/asistente_escolar_ia
 
-      # Plan 4: proveedor + fallback
       - LLM_PROVIDER=ollama
       - LLM_PROVIDER_CHAIN=ollama,openai,gemini
       - OLLAMA_BASE_URL=http://ollama:11434
@@ -47,9 +46,8 @@ services:
       - OLLAMA_TIMEOUT_S=20
       - OPENAI_TIMEOUT_S=45
       - GEMINI_TIMEOUT_S=45
-
-      # Si quieres mantener Gemini como fallback explícito (opcional)
       - GEMINI_MODEL_NAME=gemini-2.0-flash
+      - RAG_ENABLED=false
 
     depends_on:
       - db
@@ -58,6 +56,7 @@ services:
       - "8000:8000"
     volumes:
       - ./backend:/app
+      - hf_cache:/root/.cache
 
   adminer:
     image: adminer
@@ -68,3 +67,4 @@ services:
 
 volumes:
   ollama:
+  hf_cache:

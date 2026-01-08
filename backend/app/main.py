@@ -10,6 +10,7 @@ from .cases.cu3_resumen import resumen_con_llm
 from .cases.cu4_quiz import quiz_con_llm
 from .cases.cu5_adaptar import adaptar_con_llm
 
+from app.embeddings import embed_texts
 
 from fastapi import FastAPI
 from pydantic import BaseModel, Field
@@ -43,6 +44,12 @@ if STIMULATION_DEFAULT not in ("alto", "bajo"):
 def on_startup():
     init_db()
 
+async def _warmup():    
+    try:
+        embed_texts(["warmup"])
+        print("✅ Embeddings warmup OK")
+    except Exception as e:
+        print(f"⚠️ Embeddings warmup falló: {e}")
 
 @app.on_event("shutdown")
 def on_shutdown():
