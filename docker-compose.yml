@@ -2,7 +2,7 @@ version: "3.9"
 
 services:
   db:
-    image: pgvector/pgvector:pg16     # ← antes era postgres:16
+    image: pgvector/pgvector:pg16
     container_name: asistente-escolar-ia-db
     restart: unless-stopped
     environment:
@@ -15,6 +15,20 @@ services:
       - ./db/data:/var/lib/postgresql/data
       - ./db/init.sql:/docker-entrypoint-initdb.d/init.sql:ro
 
+  ollama:
+    image: ollama/ollama:latest
+    container_name: asistente-escolar-ia-ollama
+    restart: unless-stopped
+    ports:
+      - "11434:11434"
+    volumes:
+      - ollama:/root/.ollama
+    healthcheck:
+      test: ["CMD-SHELL", "ollama list >/dev/null 2>&1 || exit 1"]
+      interval: 10s
+      timeout: 5s
+      retries: 15
+
   backend:
     build: ./backend
     container_name: asistente-escolar-ia-backend
@@ -23,9 +37,23 @@ services:
       - ./backend/.env
     environment:
       - DATABASE_URL=postgresql://postgres:postgres@db:5432/asistente_escolar_ia
-      - GEMINI_MODEL_NAME=gemini-2.5-flash
+
+      # Plan 4: proveedor + fallback
+      - LLM_PROVIDER=ollama
+      - LLM_PROVIDER_CHAIN=ollama,openai,gemini
+      - OLLAMA_BASE_URL=http://ollama:11434
+      - OLLAMA_MODEL=llama3.1:8b
+      - LLM_TIMEOUT_S=45
+      - OLLAMA_TIMEOUT_S=20
+      - OPENAI_TIMEOUT_S=45
+      - GEMINI_TIMEOUT_S=45
+
+      # Si quieres mantener Gemini como fallback explícito (opcional)
+      - GEMINI_MODEL_NAME=gemini-2.0-flash
+
     depends_on:
       - db
+      - ollama
     ports:
       - "8000:8000"
     volumes:
@@ -38,6 +66,5 @@ services:
     ports:
       - "8080:8080"
 
-# El script init.sql se ejecuta solo la primera vez que se crea la BD (si borras ./db/data, se vuelve a ejecutar).
-# Adminer es un mini-panel web para ver la BD en http://localhost:8080 (servidor: db, usuario postgres, pass postgres, 
-# BD asistente_escolar_ia).
+volumes:
+  ollama:

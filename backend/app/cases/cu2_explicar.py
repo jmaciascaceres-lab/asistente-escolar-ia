@@ -2,7 +2,7 @@
 from typing import Tuple
 
 from ..rag_service import search_snippets
-from ..llm_client import generate_llm_answer, LLM_MODEL_NAME
+from ..llm_client import generate_llm_answer
 from ..llm_prompts import SYSTEM_PROMPT_STUDENT, build_cu2_user_prompt
 from ..utils_sources import build_sources_block_from_snippets, estimate_snippet_coverage, MIN_COVERAGE_RATIO, infer_subject 
 
@@ -21,7 +21,7 @@ def explicar_con_llm(msg) -> Tuple[str, dict]:
     Retorna (texto_respuesta, llm_meta).
     """
     user_query = _extract_explanation_topic_from_msg(msg)
-    mode = msg.settings.get("modo", "alto")
+    mode = msg.settings.get("modo", "alta")
 
     # 1) Recuperar snippets de currículo primero
     subject = infer_subject(user_query)
@@ -55,7 +55,7 @@ def explicar_con_llm(msg) -> Tuple[str, dict]:
     )
 
     # 3) LLM
-    answer_text, prompt_tokens, completion_tokens = generate_llm_answer(
+    answer_text, prompt_tokens, completion_tokens, model_label = generate_llm_answer(
         system_prompt=SYSTEM_PROMPT_STUDENT,
         user_prompt=user_prompt,
         temperature=0.6,
@@ -81,7 +81,7 @@ def explicar_con_llm(msg) -> Tuple[str, dict]:
         )
 
     llm_meta = {
-        "llm_model": LLM_MODEL_NAME,
+        "llm_model": model_label,
         "llm_prompt_tokens": prompt_tokens,
         "llm_completion_tokens": completion_tokens,
     }

@@ -64,7 +64,7 @@ RAG
 - Documentos: normativa MINEDUC, Ley de Autismo, DUA, PAEC, currículum, etc.
 
 LLM externo (Gemini)
-- Modelo configurable (por defecto gemini-2.5-flash).
+- Modelo configurable (por defecto gemini-2.0-flash).
 - Envoltura centralizada en llm_client.py.
 - Casos de uso que lo usan: /explicar, /resumen, /quiz, /adaptar.
 - System prompts diferenciados para estudiantes y docentes, y restricción explícita: no usar Markdown (para evitar **negritas** en Telegram).
@@ -369,7 +369,7 @@ Investigación
 - `extra` (JSONB) → datos de contexto (colegio, curso, cohorte, etc.).
 
 LLM
-- `llm_model` → p.ej. "gemini-2.5-flash"
+- `llm_model` → p.ej. "gemini-2.0-flash"
 - `llm_prompt_tokens`
 - `llm_completion_tokens`
 
@@ -413,7 +413,7 @@ ORDER BY case_id;
 
 Configurar en el entorno del backend:
 - `GEMINI_API_KEY` (obligatoria): clave de la API de Gemini.
-- `GEMINI_MODEL_NAME` (opcional): nombre del modelo, por defecto gemini-2.5-flash.
+- `GEMINI_MODEL_NAME` (opcional): nombre del modelo, por defecto gemini-2.0-flash.
 
 ### 6.2. Telegram
 
