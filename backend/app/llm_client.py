@@ -49,7 +49,7 @@ GEMINI_TIMEOUT_S = _env_int("GEMINI_TIMEOUT_S", 45)
 # Modelos
 GEMINI_MODEL_NAME = _env_str("GEMINI_MODEL_NAME", "gemini-2.0-flash")
 OPENAI_MODEL = _env_str("OPENAI_MODEL", "gpt-4o-mini")
-OLLAMA_MODEL = _env_str("OLLAMA_MODEL", "llama3.1:8b-instruct")
+OLLAMA_MODEL = _env_str("OLLAMA_MODEL", "llama3.1:8b")
 
 # Bases / keys
 OLLAMA_BASE_URL = _env_str("OLLAMA_BASE_URL", "http://localhost:11434")
@@ -104,7 +104,7 @@ def _ollama_chat(system_prompt: str, user_prompt: str, max_new_tokens: int, temp
     url = f"{OLLAMA_BASE_URL.rstrip('/')}/api/chat"
     payload = {
         "model": OLLAMA_MODEL,
-        "stream": False,
+        "stream": True,
         "messages": [
             {"role": "system", "content": system_prompt},
             {"role": "user", "content": user_prompt},
@@ -115,7 +115,7 @@ def _ollama_chat(system_prompt: str, user_prompt: str, max_new_tokens: int, temp
         },
     }
 
-    r = requests.post(url, json=payload, timeout=timeout_s)
+    r = requests.post(url, json=payload, timeout=(5, timeout_s))
     r.raise_for_status()
     data = r.json()
 
@@ -239,7 +239,7 @@ def generate_llm_answer(
       - answer_text
       - prompt_tokens
       - completion_tokens
-      - model_label (ej: "openai:gpt-4o-mini" | "gemini:gemini-2.0-flash" | "ollama:llama3.1:8b-instruct")
+      - model_label (ej: "openai:gpt-4o-mini" | "gemini:gemini-2.0-flash" | "ollama:llama3.1:8b")
     """
     providers = LLM_PROVIDER_CHAIN[:] if LLM_PROVIDER_CHAIN else [LLM_PROVIDER]
 
