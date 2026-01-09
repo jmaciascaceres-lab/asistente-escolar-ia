@@ -37,6 +37,9 @@ services:
       - ./backend/.env
     environment:
       - DATABASE_URL=postgresql://postgres:postgres@db:5432/asistente_escolar_ia
+      - HF_HOME=/cache/huggingface
+      - SENTENCE_TRANSFORMERS_HOME=/cache/huggingface
+      - TOKENIZERS_PARALLELISM=false
 
       - LLM_PROVIDER=ollama
       - LLM_PROVIDER_CHAIN=ollama,openai,gemini
@@ -57,6 +60,7 @@ services:
     volumes:
       - ./backend:/app
       - hf_cache:/root/.cache
+      - hf_cache:/cache/huggingface
 
   adminer:
     image: adminer

@@ -511,11 +511,18 @@ def main():
                     "settings": settings,
                 }
 
+                # ---- Ajustes de diagnóstico (dev) ----
+                BOT_DEBUG = os.getenv("BOT_DEBUG", "1") == "1"
+                BACKEND_TIMEOUT_CONNECT = float(os.getenv("BACKEND_TIMEOUT_CONNECT", "10"))
+                BACKEND_TIMEOUT_READ = float(os.getenv("BACKEND_TIMEOUT_READ", "600"))
+
                 # 2) Medir tiempo de respuesta total (bot → backend → bot)
                 t0 = time.time()
                 try:
                     resp = requests.post(
-                        BACKEND_URL, json=backend_payload, timeout=(10, 300)
+                        BACKEND_URL,
+                        json=backend_payload,
+                        timeout=(BACKEND_TIMEOUT_CONNECT, BACKEND_TIMEOUT_READ),
                     )
                     elapsed = time.time() - t0
 
@@ -526,11 +533,37 @@ def main():
                             "Hubo un problema al generar la respuesta en el backend.",
                         )
                     else:
-                        reply_text = "No pude conectar con el backend (error de servidor)."
+                        # Intentar extraer detalle del backend
+                        detail = None
+                        try:
+                            detail = resp.json()
+                        except Exception:
+                            detail = resp.text
+
+                        print(f"[backend_error] status={resp.status_code} body={str(detail)[:2000]}")
+
+                        if BOT_DEBUG:
+                            reply_text = f"No pude procesar tu solicitud (backend {resp.status_code}).\nDetalle (dev): {str(detail)[:800]}"
+                        else:
+                            reply_text = "No pude procesar tu solicitud (error de servidor)."
+
+                except requests.exceptions.ReadTimeout as e:
+                    elapsed = time.time() - t0
+                    print("[backend_timeout] ReadTimeout:", repr(e))
+                    reply_text = (
+                        "El backend está tardando más de lo normal en responder. "
+                        "Intenta nuevamente en unos momentos."
+                    )
+
+                except requests.exceptions.ConnectionError as e:
+                    elapsed = time.time() - t0
+                    print("[backend_conn_error] ConnectionError:", repr(e))
+                    reply_text = "No pude conectar con el backend en este momento."
+
                 except Exception as e:
                     elapsed = time.time() - t0
-                    print("Error llamando al backend:", e)
-                    reply_text = "No pude conectar con el backend en este momento."
+                    print("[backend_unknown_error] Exception:", repr(e))
+                    reply_text = "Ocurrió un error inesperado al llamar al backend."
 
                 # 3) Añadir tiempo de respuesta al final del mensaje
                 reply_text += f"\n\nTiempo de respuesta del asistente: {elapsed:.1f} segundos."

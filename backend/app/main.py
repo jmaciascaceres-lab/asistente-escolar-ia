@@ -43,18 +43,15 @@ if STIMULATION_DEFAULT not in ("alto", "bajo"):
 @app.on_event("startup")
 def on_startup():
     init_db()
+    print("✅ DB inicializada")
 
-async def _warmup():    
-    try:
-        embed_texts(["warmup"])
-        print("✅ Embeddings warmup OK")
-    except Exception as e:
-        print(f"⚠️ Embeddings warmup falló: {e}")
+    print("⏳ Warmup embeddings...")
+    embed_texts(["warmup"])
+    print("✅ Embeddings warmup OK")
 
 @app.on_event("shutdown")
 def on_shutdown():
     close_db()
-
 
 # ---------- Modelos Pydantic ----------
 
