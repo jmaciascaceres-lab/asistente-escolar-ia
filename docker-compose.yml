@@ -45,8 +45,8 @@ services:
       - LLM_PROVIDER_CHAIN=ollama,openai,gemini
       - OLLAMA_BASE_URL=http://ollama:11434
       - OLLAMA_MODEL=llama3.1:8b
-      - LLM_TIMEOUT_S=45
-      - OLLAMA_TIMEOUT_S=20
+      - LLM_TIMEOUT_S=180
+      - OLLAMA_TIMEOUT_S=180
       - OPENAI_TIMEOUT_S=45
       - GEMINI_TIMEOUT_S=45
       - GEMINI_MODEL_NAME=gemini-2.0-flash

@@ -50,6 +50,7 @@ GEMINI_TIMEOUT_S = _env_int("GEMINI_TIMEOUT_S", 45)
 GEMINI_MODEL_NAME = _env_str("GEMINI_MODEL_NAME", "gemini-2.0-flash")
 OPENAI_MODEL = _env_str("OPENAI_MODEL", "gpt-4o-mini")
 OLLAMA_MODEL = _env_str("OLLAMA_MODEL", "llama3.1:8b")
+OLLAMA_MAX_NEW_TOKENS = _env_int("OLLAMA_MAX_NEW_TOKENS", 256)
 
 # Bases / keys
 OLLAMA_BASE_URL = _env_str("OLLAMA_BASE_URL", "http://localhost:11434")
@@ -252,7 +253,7 @@ def generate_llm_answer(
                 t = _ollama_chat(
                     system_prompt=system_prompt,
                     user_prompt=user_prompt,
-                    max_new_tokens=max_new_tokens,
+                    max_new_tokens=OLLAMA_MAX_NEW_TOKENS,
                     temperature=temperature,
                     timeout_s=min(OLLAMA_TIMEOUT_S, LLM_TIMEOUT_S),
                 )
