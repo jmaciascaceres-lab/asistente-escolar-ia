@@ -105,7 +105,7 @@ def _ollama_chat(system_prompt: str, user_prompt: str, max_new_tokens: int, temp
     url = f"{OLLAMA_BASE_URL.rstrip('/')}/api/chat"
     payload = {
         "model": OLLAMA_MODEL,
-        "stream": True,
+        "stream": False,
         "messages": [
             {"role": "system", "content": system_prompt},
             {"role": "user", "content": user_prompt},
