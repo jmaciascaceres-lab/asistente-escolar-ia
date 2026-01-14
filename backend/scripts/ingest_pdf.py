@@ -43,18 +43,18 @@ def main():
 
     pdf_path = Path(args.path)
     if not pdf_path.exists():
-        print(f"❌ PDF no encontrado: {pdf_path}")
+        print(f"-- PDF no encontrado: {pdf_path}")
         sys.exit(1)
 
-    print(f"📄 Extrayendo texto de {pdf_path}...")
+    print(f"-- Extrayendo texto de {pdf_path}...")
     full_text = extract_text_from_pdf(pdf_path)
 
     metadata = {"tags": args.tag or []}
 
-    print("🧬 Inicializando conexión a BD...")
+    print("-- Inicializando conexión a BD...")
     init_db()
     try:
-        print("📥 Ingestando documento y chunks...")
+        print("-- Ingestando documento y chunks...")
         doc_id = ingest_document_with_text(
             title=args.title,
             doc_type=args.doc_type,
@@ -64,7 +64,7 @@ def main():
             year=args.year,
             metadata=metadata,
         )
-        print(f"✅ Documento ingerido con id={doc_id}")
+        print(f"-- Documento ingerido con id={doc_id}")
     finally:
         close_db()
 

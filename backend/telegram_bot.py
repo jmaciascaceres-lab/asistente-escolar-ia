@@ -1,40 +1,122 @@
 import os
 import time
 import requests
+import json
 from dotenv import load_dotenv
-from typing import Dict
+from typing import Dict, List, Optional
 
-load_dotenv()  # carga .env desde el directorio actual
+load_dotenv(dotenv_path=os.getenv('DOTENV_PATH', 'backend/.env'), override=False)
 
 TOKEN = os.getenv("TELEGRAM_BOT_TOKEN")
-BACKEND_URL = os.getenv("BACKEND_URL", "http://localhost:8000/api/v1/messages")
-EXPERIMENT_TAG_DOCENTES = "pilot_docentes_2025S1"
+BACKEND_URL = os.getenv("BACKEND_URL", "http://backend:8000/api/v1/messages")
+EXPERIMENT_TAG_DOCENTES = "pilot_docentes_2026S1"
 EXTRA_BASE_DOCENTES = {
     "contexto": "taller_docentes",
     "pais": "Chile"
 }
+TELEGRAM_MODE = os.getenv("TELEGRAM_MODE", "polling").strip().lower()
+
+if not TOKEN:
+    raise RuntimeError('TELEGRAM_BOT_TOKEN no está definido (revisa env_file/.env).')
+if not BACKEND_URL or 'localhost' in BACKEND_URL:
+    raise RuntimeError(f'BACKEND_URL inválida dentro de Docker: {BACKEND_URL}. Usa http://backend:8000/api/v1/messages')
+
+# Polling settings
+TELEGRAM_LONGPOLL_TIMEOUT = int(os.getenv("TELEGRAM_LONGPOLL_TIMEOUT", "50"))
+TELEGRAM_POLLING_LIMIT = int(os.getenv("TELEGRAM_POLLING_LIMIT", "100"))
+TELEGRAM_DROP_PENDING_UPDATES = os.getenv("TELEGRAM_DROP_PENDING_UPDATES", "false").strip().lower() in ("1", "true", "yes")
+
+allowed_updates_raw = os.getenv("TELEGRAM_ALLOWED_UPDATES", "").strip()
+TELEGRAM_ALLOWED_UPDATES: Optional[List[str]]
+if allowed_updates_raw:
+    TELEGRAM_ALLOWED_UPDATES = [x.strip() for x in allowed_updates_raw.split(",") if x.strip()]
+else:
+    TELEGRAM_ALLOWED_UPDATES = None  # None = Telegram enviará todos los updates
 
 if not TOKEN:
     raise RuntimeError("TELEGRAM_BOT_TOKEN no está definido en .env")
 
 BASE_URL = f"https://api.telegram.org/bot{TOKEN}"
 
+OFFSET_FILE = os.getenv("TELEGRAM_OFFSET_FILE", ".telegram_offset.json")
 
-def get_updates(offset=None):
-    params = {"timeout": 30}
+def load_offset() -> int | None:
+    try:
+        with open(OFFSET_FILE, "r", encoding="utf-8") as f:
+            return int(json.load(f).get("offset"))
+    except Exception:
+        return None
+
+
+def save_offset(offset: int) -> None:
+    try:
+        with open(OFFSET_FILE, "w", encoding="utf-8") as f:
+            json.dump({"offset": offset}, f)
+    except Exception as e:
+        print("[offset_save_error]", repr(e))
+
+
+def tg_api(method: str, params: dict | None = None, json_body: dict | None = None, timeout: float = 30.0) -> dict:
+    url = f"{BASE_URL}/{method}"
+    try:
+        if json_body is not None:
+            r = requests.post(url, json=json_body, timeout=timeout)
+        else:
+            r = requests.get(url, params=params, timeout=timeout)
+        data = r.json()
+        if not data.get("ok"):
+            print(f"[telegram_api_error] method={method} status={r.status_code} body={str(data)[:2000]}")
+        return data
+    except Exception as e:
+        print(f"[telegram_api_exception] method={method} error={repr(e)}")
+        return {"ok": False, "error": str(e)}
+
+
+def ensure_no_webhook():
+    """
+    Para long-polling, es buena práctica borrar cualquier webhook previo.
+    Telegram permite drop_pending_updates en deleteWebhook para limpiar cola.
+    """
+    # getWebhookInfo (diagnóstico)
+    info = tg_api("getWebhookInfo", timeout=15)
+    if info.get("ok"):
+        url = (info.get("result") or {}).get("url")
+        pending = (info.get("result") or {}).get("pending_update_count")
+        print(f"[webhook_info] url={url!r} pending_update_count={pending}")
+
+    # deleteWebhook (con o sin drop_pending_updates)
+    payload = {"drop_pending_updates": True} if TELEGRAM_DROP_PENDING_UPDATES else {}
+    res = tg_api("deleteWebhook", json_body=payload if payload else {}, timeout=15)
+    if res.get("ok"):
+        print(f"[webhook_deleted] drop_pending_updates={TELEGRAM_DROP_PENDING_UPDATES}")
+    else:
+        print(f"[webhook_delete_failed] drop_pending_updates={TELEGRAM_DROP_PENDING_UPDATES} res={res}")
+
+
+def get_updates(offset: int | None = None) -> list[dict]:
+    params: dict = {
+        "timeout": TELEGRAM_LONGPOLL_TIMEOUT,
+        "limit": TELEGRAM_POLLING_LIMIT,
+    }
     if offset is not None:
         params["offset"] = offset
-    resp = requests.get(f"{BASE_URL}/getUpdates", params=params, timeout=35)
+    if TELEGRAM_ALLOWED_UPDATES is not None:
+        params["allowed_updates"] = json.dumps(TELEGRAM_ALLOWED_UPDATES)  # Telegram espera JSON-serialized array
+
+    # Requests timeout debe ser > longpoll timeout (margen)
+    req_timeout = TELEGRAM_LONGPOLL_TIMEOUT + 10
+    resp = requests.get(f"{BASE_URL}/getUpdates", params=params, timeout=req_timeout)
     data = resp.json()
+    if not data.get("ok"):
+        print("[get_updates_error]", data)
+        return []
     return data.get("result", [])
 
 
 def send_message(chat_id: int, text: str) -> dict:
-    payload = {
-        "chat_id": chat_id,
-        "text": text,
-    }
-    resp = requests.post(f"{BASE_URL}/sendMessage", json=payload)
+    payload = {"chat_id": chat_id, "text": text}
+    # timeout corto; si Telegram no responde, no queremos bloquear el worker
+    resp = requests.post(f"{BASE_URL}/sendMessage", json=payload, timeout=20)
     data = resp.json()
     if not data.get("ok"):
         print("Error al enviar mensaje:", data)
@@ -174,14 +256,24 @@ def get_help_message_for_role(role: str) -> str:
     )
 
 def main():
-    print("🚀 Iniciando bot de Telegram (long polling)...")
-    offset = None
+    print("-- Iniciando bot de Telegram (long polling)...")
+
+    if TELEGRAM_MODE != "polling":
+        raise RuntimeError(f"TELEGRAM_MODE={TELEGRAM_MODE} no soportado en este script. Usa TELEGRAM_MODE=polling")
+
+    ensure_no_webhook()
+
+    print("-- Modo polling activo.")
+
+    offset = load_offset()
+    print(f"[offset] starting_offset={offset}")
 
     while True:
         try:
             updates = get_updates(offset)
             for update in updates:
                 offset = update["update_id"] + 1
+                save_offset(offset)
 
                 if "message" not in update:
                     continue

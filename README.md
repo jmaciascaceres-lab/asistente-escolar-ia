@@ -30,6 +30,15 @@ Servicios principales:
 # desde la raíz del repo
 docker compose up --build   # levanta backend + db + adminer
 
+# luego cuando ya fue creado anteriormente el repo
+docker compose up -d       
+
+# para bajar el servicio
+docker compose down
+
+# para ver logs
+docker compose logs -f db
+
 # en otra terminal, dentro de backend/
 cd backend
 python telegram_bot.py      # inicia el bot de Telegram

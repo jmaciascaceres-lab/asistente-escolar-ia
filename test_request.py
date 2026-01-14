@@ -1,7 +1,7 @@
 import requests
 import json
 
-url = "http://localhost:8000/api/v1/messages"
+url = "http://backend:8000/api/v1/messages"
 payload = {
     "telegram_id": 12345,
     "role": "student",

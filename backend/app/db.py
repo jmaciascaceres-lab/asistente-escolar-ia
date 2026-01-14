@@ -21,7 +21,7 @@ def init_db():
             maxconn=10,
             dsn=DATABASE_URL,
         )
-        print("✅ Pool de conexiones a Postgres inicializado")
+        print("-- Pool de conexiones a Postgres inicializado")
 
 
 def close_db():
@@ -32,7 +32,7 @@ def close_db():
     if _pool is not None:
         _pool.closeall()
         _pool = None
-        print("🛑 Pool de conexiones cerrado")
+        print("-- Pool de conexiones cerrado")
 
 
 @contextmanager

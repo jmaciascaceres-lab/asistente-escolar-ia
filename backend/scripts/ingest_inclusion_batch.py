@@ -135,19 +135,19 @@ def infer_metadata(filename: str):
 
 
 def main():
-    print("🚀 Iniciando script de ingesta MVP v1.1 (con limpieza previa)...")
-    print(f"📂 DOCS_DIR: {DOCS_DIR}")
+    print("-- Iniciando script de ingesta MVP v1.1 (con limpieza previa)...")
+    print(f"-- DOCS_DIR: {DOCS_DIR}")
     print("🔌 Conectando a la BD...")
     init_db()
-    print("✅ BD conectada.")
+    print("-- BD conectada.")
     try:
         if not DOCS_DIR.exists():
-            print(f"❌ No existe el directorio: {DOCS_DIR}")
+            print(f"-- No existe el directorio: {DOCS_DIR}")
             return
 
         # Listar todos los PDFs
         pdf_files = list(DOCS_DIR.glob("*.pdf"))
-        print(f"📂 Se encontraron {len(pdf_files)} archivos PDF en {DOCS_DIR}")
+        print(f"-- Se encontraron {len(pdf_files)} archivos PDF en {DOCS_DIR}")
 
         for pdf_path in pdf_files:
             filename = pdf_path.name
@@ -162,12 +162,12 @@ def main():
             try:
                 raw_text = extract_text_from_pdf(pdf_path)
             except Exception as e:
-                print(f"   ❌ Error leyendo PDF: {e}")
+                print(f"-- Error leyendo PDF: {e}")
                 continue
 
             raw_len = len(raw_text)
             if raw_len == 0:
-                print("   ⚠️ PDF sin texto extraído (¿escaneado sin OCR?). Se omite.")
+                print("-- PDF sin texto extraído (¿escaneado sin OCR?). Se omite.")
                 continue
 
             # Paso 2: Limpieza básica
@@ -175,7 +175,7 @@ def main():
             clean_len = len(cleaned_text)
 
             print(
-                f"   🧹 Limpieza básica: {raw_len} → {clean_len} caracteres "
+                f"-- Limpieza básica: {raw_len} → {clean_len} caracteres "
                 f"({(clean_len / raw_len * 100):.1f}% del tamaño original)"
             )
 
@@ -184,13 +184,13 @@ def main():
             dedup_len = len(dedup_text)
 
             print(
-                f"   🔁 Deduplicación de párrafos: total={total_pars}, "
+                f"-- Deduplicación de párrafos: total={total_pars}, "
                 f"eliminados={removed_pars}, chars={clean_len} → {dedup_len}"
             )
 
             if dedup_len < 1000:
                 print(
-                    "   ⚠️ Documento quedó muy corto tras limpieza/deduplicación. "
+                    "-- Documento quedó muy corto tras limpieza/deduplicación. "
                     "Revisa si la extracción del PDF es adecuada."
                 )
 
@@ -198,11 +198,11 @@ def main():
             preview_chunks = chunk_text(dedup_text)
             num_chunks = len(preview_chunks)
             if num_chunks == 0:
-                print("   ⚠️ No se generaron chunks en validación previa. Se omite este PDF.")
+                print("-- No se generaron chunks en validación previa. Se omite este PDF.")
                 continue
 
             print(
-                f"   🔍 Validación rápida de chunking: {num_chunks} chunks estimados "
+                f"-- Validación rápida de chunking: {num_chunks} chunks estimados "
                 f"(ejemplo inicio primer chunk: {preview_chunks[0][:120]!r})"
             )
 
@@ -229,7 +229,7 @@ def main():
                 "docs_dir": str(DOCS_DIR),
             }
 
-            print(f"   📥 Ingestando como: «{title}» ({doc_type}, {year})")
+            print(f"-- Ingestando como: «{title}» ({doc_type}, {year})")
 
             # Paso 6: Ingesta + embeddings (dentro de ingest_document_with_text)
             try:
@@ -242,13 +242,13 @@ def main():
                     year=year,
                     metadata=metadata,
                 )
-                print(f"   ✅ OK. ID={doc_id}")
+                print(f"-- OK. ID={doc_id}")
             except Exception as e:
-                print(f"   ❌ Error ingestando en BD: {e}")
+                print(f"-- Error ingestando en BD: {e}")
 
     finally:
         close_db()
-        print("🔌 Conexión a BD cerrada.")
+        print("-- Conexión a BD cerrada.")
 
 
 if __name__ == "__main__":

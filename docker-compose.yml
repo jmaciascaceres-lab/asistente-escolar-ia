@@ -14,20 +14,11 @@ services:
     volumes:
       - ./db/data:/var/lib/postgresql/data
       - ./db/init.sql:/docker-entrypoint-initdb.d/init.sql:ro
-
-  ollama:
-    image: ollama/ollama:latest
-    container_name: asistente-escolar-ia-ollama
-    restart: unless-stopped
-    ports:
-      - "11434:11434"
-    volumes:
-      - ollama:/root/.ollama
     healthcheck:
-      test: ["CMD-SHELL", "ollama list >/dev/null 2>&1 || exit 1"]
-      interval: 10s
-      timeout: 5s
-      retries: 15
+      test: ["CMD-SHELL", "pg_isready -U postgres -d asistente_escolar_ia >/dev/null 2>&1 || exit 1"]
+      interval: 5s
+      timeout: 3s
+      retries: 30
 
   backend:
     build: ./backend
@@ -35,32 +26,34 @@ services:
     restart: unless-stopped
     env_file:
       - ./backend/.env
-    environment:
-      - DATABASE_URL=postgresql://postgres:postgres@db:5432/asistente_escolar_ia
-      - HF_HOME=/cache/huggingface
-      - SENTENCE_TRANSFORMERS_HOME=/cache/huggingface
-      - TOKENIZERS_PARALLELISM=false
-
-      - LLM_PROVIDER=ollama
-      - LLM_PROVIDER_CHAIN=ollama,openai,gemini
-      - OLLAMA_BASE_URL=http://ollama:11434
-      - OLLAMA_MODEL=llama3.1:8b
-      - LLM_TIMEOUT_S=45
-      - OLLAMA_TIMEOUT_S=20
-      - OPENAI_TIMEOUT_S=45
-      - GEMINI_TIMEOUT_S=45
-      - GEMINI_MODEL_NAME=gemini-2.0-flash
-      - RAG_ENABLED=false
-
     depends_on:
-      - db
-      - ollama
+      db:
+        condition: service_healthy
     ports:
       - "8000:8000"
     volumes:
-      - ./backend:/app
       - hf_cache:/root/.cache
-      - hf_cache:/cache/huggingface
+    healthcheck:
+      test: ["CMD-SHELL", "python -c \"import requests; requests.get('http://localhost:8000/docs', timeout=2)\" >/dev/null 2>&1 || exit 1"]
+      interval: 10s
+      timeout: 3s
+      retries: 30
+
+  telegram-bot:
+    build: ./backend
+    container_name: asistente-escolar-ia-telegram-bot
+    restart: unless-stopped
+    env_file:
+      - ./backend/.env
+    environment:
+      - BACKEND_URL=http://backend:8000/api/v1/messages
+      - TELEGRAM_OFFSET_FILE=/data/.telegram_offset.json
+    volumes:
+      - telegram_data:/data
+    command: python /app/telegram_bot.py
+    depends_on:
+      backend:
+        condition: service_healthy
 
   adminer:
     image: adminer
@@ -70,5 +63,5 @@ services:
       - "8080:8080"
 
 volumes:
-  ollama:
   hf_cache:
+  telegram_data:

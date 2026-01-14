@@ -10,9 +10,6 @@ from ..utils_sources import build_sources_block_from_snippets, estimate_snippet_
 
 RAG_ENABLED = os.getenv("RAG_ENABLED", "true").lower() in ("1", "true", "yes")
 
-snippets = []
-if RAG_ENABLED:
-    snippets = search_snippets(user_query, filters=filters, k=5)
 
 
 def _extract_explanation_topic_from_msg(msg) -> str:

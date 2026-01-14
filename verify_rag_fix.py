@@ -1,7 +1,7 @@
 import requests
 import json
 
-url = "http://localhost:8000/api/v1/rag/ingest"
+url = "http://backend:8000/api/v1/rag/ingest"
 headers = {"Content-Type": "application/json"}
 data = {
     "title": "Documento de prueba",

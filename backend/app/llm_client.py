@@ -6,7 +6,7 @@ import random
 from typing import Tuple, Optional, List
 from concurrent.futures import ThreadPoolExecutor, TimeoutError as FutTimeout
 
-import requests
+from requests import HTTPError
 
 # Gemini
 from google import genai
@@ -41,19 +41,18 @@ else:
     LLM_PROVIDER_CHAIN = [LLM_PROVIDER, "openai", "gemini"]
 
 # Timeout por defecto y por proveedor
-LLM_TIMEOUT_S = _env_int("LLM_TIMEOUT_S", 45)
-OLLAMA_TIMEOUT_S = _env_int("OLLAMA_TIMEOUT_S", 20)
-OPENAI_TIMEOUT_S = _env_int("OPENAI_TIMEOUT_S", 45)
-GEMINI_TIMEOUT_S = _env_int("GEMINI_TIMEOUT_S", 45)
+LLM_TIMEOUT_S = _env_int("LLM_TIMEOUT_S", 20)
+OPENAI_TIMEOUT_S = _env_int("OPENAI_TIMEOUT_S", 20)
+GEMINI_TIMEOUT_S = _env_int("GEMINI_TIMEOUT_S", 20)
 
 # Modelos
 GEMINI_MODEL_NAME = _env_str("GEMINI_MODEL_NAME", "gemini-2.0-flash")
 OPENAI_MODEL = _env_str("OPENAI_MODEL", "gpt-4o-mini")
-OLLAMA_MODEL = _env_str("OLLAMA_MODEL", "llama3.1:8b")
-OLLAMA_MAX_NEW_TOKENS = _env_int("OLLAMA_MAX_NEW_TOKENS", 256)
+# OLLAMA_MODEL = _env_str("OLLAMA_MODEL", "llama3.1:8b")
+# OLLAMA_MAX_NEW_TOKENS = _env_int("OLLAMA_MAX_NEW_TOKENS", 160)
 
 # Bases / keys
-OLLAMA_BASE_URL = _env_str("OLLAMA_BASE_URL", "http://localhost:11434")
+# OLLAMA_BASE_URL = _env_str("OLLAMA_BASE_URL", "http://localhost:11434")
 OPENAI_API_KEY = _env_str("OPENAI_API_KEY", "")
 GOOGLE_API_KEY = _env_str("GOOGLE_API_KEY", "") or _env_str("GEMINI_API_KEY", "")
 
@@ -62,7 +61,7 @@ GOOGLE_API_KEY = _env_str("GOOGLE_API_KEY", "") or _env_str("GEMINI_API_KEY", ""
 LLM_MODEL_NAME = {
     "gemini": GEMINI_MODEL_NAME,
     "openai": OPENAI_MODEL,
-    "ollama": OLLAMA_MODEL,
+    # "ollama": OLLAMA_MODEL,
 }.get(LLM_PROVIDER, GEMINI_MODEL_NAME)
 
 
@@ -103,24 +102,64 @@ def _is_transient_error(msg: str) -> bool:
 
 def _ollama_chat(system_prompt: str, user_prompt: str, max_new_tokens: int, temperature: float, timeout_s: int) -> str:
     url = f"{OLLAMA_BASE_URL.rstrip('/')}/api/chat"
+
+    # Control por env (opcional)
+    keep_alive = os.getenv("OLLAMA_KEEP_ALIVE_REQ", "30m")  # request-level
+    num_thread_env = os.getenv("OLLAMA_NUM_THREAD", "").strip()
+    max_cap_env = os.getenv("OLLAMA_MAX_TOKENS_CAP", "").strip()
+
+    # Cap opcional para evitar respuestas enormes en CPU
+    if max_cap_env.isdigit():
+        max_new_tokens = min(max_new_tokens, int(max_cap_env))
+
+    options = {
+        "temperature": temperature,
+        "num_predict": max_new_tokens,
+    }
+
+    if num_thread_env.isdigit():
+        options["num_thread"] = int(num_thread_env)
+
     payload = {
         "model": OLLAMA_MODEL,
         "stream": False,
+        "keep_alive": keep_alive,
         "messages": [
             {"role": "system", "content": system_prompt},
             {"role": "user", "content": user_prompt},
         ],
-        "options": {
-            "temperature": temperature,
-            "num_predict": max_new_tokens,
-        },
+        "options": options,
     }
 
-    r = requests.post(url, json=payload, timeout=(5, timeout_s))
-    r.raise_for_status()
-    data = r.json()
+    # Si tu PC a veces “duerme” o hay latencia, sube connect timeout también
+    connect_timeout_s = int(os.getenv("OLLAMA_CONNECT_TIMEOUT_S", "10"))
 
-    # Formato típico: {"message": {"role": "...", "content": "..."}, ...}
+    max_attempts = int(os.getenv("OLLAMA_MAX_RETRIES", "10"))
+    base_sleep = float(os.getenv("OLLAMA_RETRY_BASE_SLEEP_S", "1.0"))
+
+    last_exc = None
+    for attempt in range(max_attempts):
+        try:
+            r = requests.post(url, json=payload, timeout=(connect_timeout_s, timeout_s))
+
+            # Reintentar en estados típicamente transitorios en Ollama (CPU/model load)
+            if r.status_code in (404, 429, 500, 502, 503, 504):
+                if attempt < max_attempts - 1:
+                    time.sleep(base_sleep * (2 ** attempt))
+                    continue
+
+            r.raise_for_status()
+            data = r.json()
+            msg = (data or {}).get("message") or {}
+            return (msg.get("content") or "").strip()
+
+        except Exception as e:
+            last_exc = e
+            if attempt < max_attempts - 1:
+                time.sleep(base_sleep * (2 ** attempt))
+                continue
+            raise
+
     msg = (data or {}).get("message") or {}
     return (msg.get("content") or "").strip()
 
@@ -249,18 +288,6 @@ def generate_llm_answer(
     for p in providers:
         p = (p or "").strip().lower()
         try:
-            if p == "ollama":
-                t = _ollama_chat(
-                    system_prompt=system_prompt,
-                    user_prompt=user_prompt,
-                    max_new_tokens=OLLAMA_MAX_NEW_TOKENS,
-                    temperature=temperature,
-                    timeout_s=min(OLLAMA_TIMEOUT_S, LLM_TIMEOUT_S),
-                )
-                if t:
-                    return t, 0, 0, f"ollama:{OLLAMA_MODEL}"
-                raise RuntimeError("Ollama devolvió respuesta vacía")
-
             if p == "openai":
                 text, pt, ct = _openai_generate(
                     system_prompt=system_prompt,

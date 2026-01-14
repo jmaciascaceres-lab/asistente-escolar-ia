@@ -43,11 +43,11 @@ if STIMULATION_DEFAULT not in ("alto", "bajo"):
 @app.on_event("startup")
 def on_startup():
     init_db()
-    print("✅ DB inicializada")
+    print("-- DB inicializada")
 
-    print("⏳ Warmup embeddings...")
+    print("-- Warmup embeddings...")
     embed_texts(["warmup"])
-    print("✅ Embeddings warmup OK")
+    print("-- Embeddings warmup OK")
 
 @app.on_event("shutdown")
 def on_shutdown():
@@ -68,7 +68,7 @@ class MessageIn(BaseModel):
     """
     telegram_id: int
     role: UserRole
-    command: Optional[str] = None   # 👈 antes era str
+    command: Optional[str] = None   # antes era str
     text: str
     course_id: Optional[int] = None
     settings: dict = Field(default_factory=dict)

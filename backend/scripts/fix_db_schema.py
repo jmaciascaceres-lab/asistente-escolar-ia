@@ -30,7 +30,7 @@ def fix_schema():
     with get_db() as conn:
         with conn.cursor() as cur:
             cur.execute(sql)
-    print("✅ Tabla creada exitosamente.")
+    print("-- Tabla creada exitosamente.")
 
 if __name__ == "__main__":
     fix_schema()
