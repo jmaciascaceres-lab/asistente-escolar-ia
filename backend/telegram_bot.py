@@ -4,8 +4,10 @@ import requests
 import json
 from dotenv import load_dotenv
 from typing import Dict, List, Optional
+from pathlib import Path
 
-load_dotenv(dotenv_path=os.getenv('DOTENV_PATH', 'backend/.env'), override=False)
+if not os.getenv('TELEGRAM_BOT_TOKEN'):
+    load_dotenv(dotenv_path=os.getenv('DOTENV_PATH', 'backend/.env'), override=False)
 
 TOKEN = os.getenv("TELEGRAM_BOT_TOKEN")
 BACKEND_URL = os.getenv("BACKEND_URL", "http://backend:8000/api/v1/messages")
@@ -39,6 +41,44 @@ if not TOKEN:
 BASE_URL = f"https://api.telegram.org/bot{TOKEN}"
 
 OFFSET_FILE = os.getenv("TELEGRAM_OFFSET_FILE", ".telegram_offset.json")
+
+def _parse_int_set(csv: str) -> set[int]:
+    """Parsea CSV de enteros (ej: '123,456') -> {123,456}. Ignora vacíos e inválidos."""
+    out: set[int] = set()
+    for raw in (csv or "").split(","):
+        raw = raw.strip()
+        if not raw:
+            continue
+        try:
+            out.add(int(raw))
+        except ValueError:
+            continue
+    return out
+
+TELEGRAM_MAX_USERS = int(os.getenv("TELEGRAM_MAX_USERS", "30") or 30)
+TELEGRAM_ALLOWLIST_USER_IDS = _parse_int_set(os.getenv("TELEGRAM_ALLOWLIST_USER_IDS", ""))
+TELEGRAM_ALLOWLIST_CHAT_IDS = _parse_int_set(os.getenv("TELEGRAM_ALLOWLIST_CHAT_IDS", ""))  # útil si quieres habilitar un grupo
+
+TELEGRAM_DENY_MESSAGE = os.getenv(
+    "TELEGRAM_DENY_MESSAGE",
+    "Acceso restringido a este bot. Si necesitas acceso, solicita tu habilitación al administrador."
+)
+
+if (TELEGRAM_ALLOWLIST_USER_IDS or TELEGRAM_ALLOWLIST_CHAT_IDS) and TELEGRAM_MAX_USERS > 0:
+    if len(TELEGRAM_ALLOWLIST_USER_IDS) > TELEGRAM_MAX_USERS:
+        raise RuntimeError(
+            f"Allowlist excede TELEGRAM_MAX_USERS: {len(TELEGRAM_ALLOWLIST_USER_IDS)} > {TELEGRAM_MAX_USERS}"
+        )
+
+
+def is_allowed_user(from_id: int, chat_id: int) -> bool:
+    """Regla:
+    - Si existe allowlist (user_ids o chat_ids), SOLO permite a quienes estén listados.
+    - Si allowlist está vacía, permite a todos (modo abierto).
+    """
+    if TELEGRAM_ALLOWLIST_USER_IDS or TELEGRAM_ALLOWLIST_CHAT_IDS:
+        return (from_id in TELEGRAM_ALLOWLIST_USER_IDS) or (chat_id in TELEGRAM_ALLOWLIST_CHAT_IDS)
+    return True
 
 def load_offset() -> int | None:
     try:
@@ -285,6 +325,16 @@ def main():
                 text = message["text"].strip()
                 chat_id = message["chat"]["id"]
                 from_id = message["from"]["id"]
+
+                # /id siempre disponible (para que el usuario pueda enviarte su identificador y lo agregues a la allowlist)
+                if text == "/id":
+                    send_message(chat_id, f"user_id={from_id}\nchat_id={chat_id}")
+                    continue
+
+                # Allowlist (si está configurada, restringe el acceso)
+                if not is_allowed_user(from_id, chat_id):
+                    send_message(chat_id, TELEGRAM_DENY_MESSAGE + "\n\nTip: envíame /id para obtener tu identificador.")
+                    continue
 
                 # --- comandos de rol ---
                 if text.startswith("/soy_estudiante"):

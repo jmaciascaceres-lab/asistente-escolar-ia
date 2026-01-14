@@ -42,8 +42,8 @@ else:
 
 # Timeout por defecto y por proveedor
 LLM_TIMEOUT_S = _env_int("LLM_TIMEOUT_S", 20)
-OPENAI_TIMEOUT_S = _env_int("OPENAI_TIMEOUT_S", 20)
-GEMINI_TIMEOUT_S = _env_int("GEMINI_TIMEOUT_S", 20)
+OPENAI_TIMEOUT_S = _env_int("OPENAI_TIMEOUT_S", 45)
+GEMINI_TIMEOUT_S = _env_int("GEMINI_TIMEOUT_S", 45)
 
 # Modelos
 GEMINI_MODEL_NAME = _env_str("GEMINI_MODEL_NAME", "gemini-2.0-flash")
