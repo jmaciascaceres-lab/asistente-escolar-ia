@@ -33,9 +33,9 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
-STIMULATION_DEFAULT = os.getenv("STIMULATION_DEFAULT", "alto").strip().lower()
-if STIMULATION_DEFAULT not in ("alto", "bajo"):
-    STIMULATION_DEFAULT = "alto"
+STIMULATION_DEFAULT = os.getenv("STIMULATION_DEFAULT", "alta").strip().lower()
+if STIMULATION_DEFAULT not in ("alta", "baja"):
+    STIMULATION_DEFAULT = "alta"
 
 
 # ---------- Eventos de ciclo de vida ----------
@@ -67,7 +67,7 @@ class MessageIn(BaseModel):
     Mensaje normalizado que llega desde el bot (o desde pruebas en Swagger).
     """
     telegram_id: int
-    role: UserRole
+    role: Optional[UserRole] = None
     command: Optional[str] = None   # antes era str
     text: str
     course_id: Optional[int] = None
@@ -192,7 +192,7 @@ async def rag_search(payload: RagQuery):
 async def handle_message(msg: MessageIn):
     """
     Punto central de orquestación:
-    - determina cmd/case_id
+    - determina cmd (puede ser vacío si el usuario escribe libre)
     - merge settings (persistentes por usuario)
     - soporta /modo baja|alta (persistente)
     - ejecuta CU correspondiente
@@ -200,9 +200,8 @@ async def handle_message(msg: MessageIn):
     """
     start = time.time()
 
-    # 1) cmd/case_id temprano
+    # 1) cmd temprano (puede venir vacío si el usuario escribe libre)
     cmd, args = parse_cmd_and_args(msg)
-    case_id = infer_case_id(msg.role, cmd)
 
     # 2) Merge settings con BD + soporte /modo (persistente)
     #    Nota: hacemos 2 fases DB (set/merge usuario) -> ejecutar CU -> log/safety
@@ -212,6 +211,9 @@ async def handle_message(msg: MessageIn):
 
         # Si venía vacío, dejamos default explícito
         effective_settings.setdefault("modo", "alta")
+
+        # Resolver rol sin exigir /soy_rol (freeflow)
+        resolved_role = resolve_role(conn, msg.telegram_id, msg.role, msg.text, cmd)
 
         # 2.a) /modo baja|alta: set persistente y respuesta inmediata
         if cmd == "/modo":
@@ -228,81 +230,80 @@ async def handle_message(msg: MessageIn):
                 )
 
                 # registrar interacción (sin CU)
-                msg_eff = msg.copy(update={"settings": effective_settings, "command": cmd})
+                msg_eff = msg.copy(update={"settings": effective_settings, "command": cmd, "role": resolved_role})
                 user_id = upsert_user(conn, msg_eff)
+
+                # log básico
                 log_interaction(
                     conn,
                     user_id=user_id,
-                    role=msg_eff.role,
-                    course_id=msg_eff.course_id,
+                    role=msg_eff.role.value if msg_eff.role else None,
+                    case_id=None,
                     command=cmd,
-                    case_id=None,
-                    latency_ms=int((time.time() - start) * 1000),
-                    used_rag=False,
-                    used_cag=False,
-                    sensitive_flag=False,
-                    raw_query=msg_eff.text,
-                    raw_reply=reply_text,
-                    experiment_tag=effective_settings.get("experiment_tag"),
-                    extra=effective_settings.get("extra"),
-                    llm_model=None,
-                    llm_prompt_tokens=None,
-                    llm_completion_tokens=None,
-                )
-
-                return MessageOut(
+                    prompt_text=msg_eff.text,
                     reply_text=reply_text,
-                    case_id=None,
                     used_rag=False,
                     used_cag=False,
                     sensitive_flag=False,
+                    latency_ms=int((time.time() - start) * 1000),
+                    llm_model=None,
+                    llm_prompt_tokens=0,
+                    llm_completion_tokens=0,
+                    settings=msg_eff.settings,
+                    experiment_tag=(msg_eff.settings.get("experiment_tag") if isinstance(msg_eff.settings, dict) else None),
+                    extra=(msg_eff.settings.get("extra") if isinstance(msg_eff.settings, dict) else None),
                 )
 
-            # set efectivo + persistir
+                return MessageOut(reply_text=reply_text)
+
+            # persistir modo
             effective_settings["modo"] = new_mode
+            set_user_mode(conn, msg.telegram_id, new_mode)
 
-            msg_eff = msg.copy(update={"settings": effective_settings, "command": cmd})
+            reply_text = f"Listo. Modo de estimulación actualizado a: {new_mode}"
+
+            msg_eff = msg.copy(update={"settings": effective_settings, "command": cmd, "role": resolved_role})
             user_id = upsert_user(conn, msg_eff)
-
-            reply_text = (
-                f"Listo. Activé el modo de {'baja' if new_mode == 'baja' else 'alta'} estimulación.\n"
-                "A partir de ahora, mis respuestas se ajustarán a este modo.\n"
-                "Puedes cambiarlo cuando quieras con /modo baja o /modo alta."
-            )
 
             log_interaction(
                 conn,
                 user_id=user_id,
-                role=msg_eff.role,
-                course_id=msg_eff.course_id,
-                command=cmd,
+                role=msg_eff.role.value if msg_eff.role else None,
                 case_id=None,
-                latency_ms=int((time.time() - start) * 1000),
+                command=cmd,
+                prompt_text=msg_eff.text,
+                reply_text=reply_text,
                 used_rag=False,
                 used_cag=False,
                 sensitive_flag=False,
-                raw_query=msg_eff.text,
-                raw_reply=reply_text,
-                experiment_tag=effective_settings.get("experiment_tag"),
-                extra=effective_settings.get("extra"),
+                latency_ms=int((time.time() - start) * 1000),
                 llm_model=None,
-                llm_prompt_tokens=None,
-                llm_completion_tokens=None,
+                llm_prompt_tokens=0,
+                llm_completion_tokens=0,
+                settings=msg_eff.settings,
+                experiment_tag=(msg_eff.settings.get("experiment_tag") if isinstance(msg_eff.settings, dict) else None),
+                extra=(msg_eff.settings.get("extra") if isinstance(msg_eff.settings, dict) else None),
             )
 
-            return MessageOut(
-                reply_text=reply_text,
-                case_id=None,
-                used_rag=False,
-                used_cag=False,
-                sensitive_flag=False,
-            )
+            return MessageOut(reply_text=reply_text)
 
         # 2.b) flujo normal: persistimos settings mergeados ANTES del CU
-        msg_eff = msg.copy(update={"settings": effective_settings, "command": cmd})
+        msg_eff = msg.copy(update={"settings": effective_settings, "command": cmd, "role": resolved_role})
         user_id = upsert_user(conn, msg_eff)
 
-    # 3) Ejecutar CU (ya con settings efectivos)
+    # 3) Inferir case_id:
+    # - Si hay comando: se respeta el mapeo (rol, comando)
+    # - Si NO hay comando: se enruta por intención (texto libre)
+    if cmd:
+        case_id = infer_case_id(msg_eff.role, cmd)
+    else:
+        case_id = infer_case_id_freeflow(msg_eff.text)
+
+    # Default seguro
+    if not case_id:
+        case_id = "CU2"
+
+    # 4) Ejecutar CU (ya con settings efectivos)
     (
         reply_text,
         used_rag,
@@ -311,11 +312,11 @@ async def handle_message(msg: MessageIn):
         llm_model,
         llm_prompt_tokens,
         llm_completion_tokens,
-    ) = generate_reply_stub(msg_eff, case_id, cmd)
+    ) = generate_reply_stub(msg_eff, case_id, cmd or "")
 
     latency_ms = int((time.time() - start) * 1000)
 
-    # 4) Safety + logging (segunda fase DB)
+    # 5) Safety + logging (segunda fase DB)
     with get_db() as conn:
         sensitive_flag_override, reply_override = handle_safety_and_alerts(conn, user_id, msg_eff)
         if reply_override:
@@ -323,27 +324,24 @@ async def handle_message(msg: MessageIn):
         if sensitive_flag_override:
             sensitive_flag = True
 
-        experiment_tag = msg_eff.settings.get("experiment_tag")
-        extra = msg_eff.settings.get("extra")
-
         log_interaction(
             conn,
             user_id=user_id,
-            role=msg_eff.role,
-            course_id=msg_eff.course_id,
-            command=cmd,
+            role=msg_eff.role.value if msg_eff.role else None,
             case_id=case_id,
-            latency_ms=latency_ms,
+            command=cmd,
+            prompt_text=msg_eff.text,
+            reply_text=reply_text,
             used_rag=used_rag,
             used_cag=used_cag,
             sensitive_flag=sensitive_flag,
-            raw_query=msg_eff.text,
-            raw_reply=reply_text,
-            experiment_tag=experiment_tag,
-            extra=extra,
+            latency_ms=latency_ms,
             llm_model=llm_model,
             llm_prompt_tokens=llm_prompt_tokens,
             llm_completion_tokens=llm_completion_tokens,
+            settings=msg_eff.settings,
+            experiment_tag=(msg_eff.settings.get("experiment_tag") if isinstance(msg_eff.settings, dict) else None),
+            extra=(msg_eff.settings.get("extra") if isinstance(msg_eff.settings, dict) else None),
         )
 
     return MessageOut(
@@ -482,9 +480,9 @@ def get_user_settings_db(conn, telegram_id: int) -> dict:
         return row[0] or {} if row else {}
 
 
-def set_user_mode_db(conn, telegram_id: int, mode: str) -> None:
+def set_user_mode(conn, telegram_id: int, mode: str) -> None:
     mode = (mode or "").strip().lower()
-    if mode not in ("alto", "bajo"):
+    if mode not in ("alta", "baja"):
         raise ValueError("modo inválido")
     with conn.cursor() as cur:
         cur.execute(
@@ -609,12 +607,15 @@ def effective_cmd(msg: "MessageIn") -> str:
     return ""
 
 
-def infer_case_id(role: UserRole, command: str) -> Optional[str]:
+def infer_case_id(role: Optional[UserRole], command: str) -> Optional[str]:
     """
     Mapea (rol, comando) al case_id (CU1..CU8).
     Por ahora consideramos sólo los comandos principales.
     """
     cmd = command.strip().lower() if command else ""
+
+    if not role:
+        return None
 
     if role == UserRole.student:
         if cmd == "/tarea":
@@ -624,9 +625,6 @@ def infer_case_id(role: UserRole, command: str) -> Optional[str]:
         # /recordatorio lo asociamos a CU1 (apoyo a planificación)
         if cmd == "/recordatorio":
             return "CU1"
-        # si quisieras, también podrías permitir /reporte_semana aquí:
-        # if cmd == "/reporte_semana":
-        #     return "CU6"
 
     if role in (UserRole.teacher, UserRole.coordinator):
         if cmd == "/fuente":
@@ -654,6 +652,81 @@ def infer_case_id(role: UserRole, command: str) -> Optional[str]:
 
     # comandos genéricos (/start, /ayuda, etc.) o no mapeados
     return None
+
+
+def infer_case_id_freeflow(text: str) -> Optional[str]:
+    """Enrutamiento por intención cuando no hay comando explícito."""
+    t = _normalize(text or "")
+    if not t:
+        return "CU2"
+
+    # CU5: adaptar / DUA / adecuaciones
+    if any(k in t for k in ["adaptar", "adecuar", "dua", "ajuste razonable", "adecuacion", "adecuaciones", "accesibilidad"]):
+        return "CU5"
+
+    # CU4: quiz / preguntas / evaluación
+    if any(k in t for k in ["quiz", "cuestionario"]):
+        return "CU4"
+    if "pregunta" in t and any(k in t for k in ["evaluacion", "prueba", "control", "formativa"]):
+        return "CU4"
+
+    # CU3: resumen
+    if any(k in t for k in ["resumen", "resume", "sintetiza", "sintesis"]):
+        return "CU3"
+
+    # CU7: fuentes / normativa
+    if any(k in t for k in ["normativa", "protocolo", "reglamento", "lineamientos", "mineduc", "ley", "decreto", "orientaciones", "fuente"]):
+        return "CU7"
+
+    # CU1: planificación / tareas / estudio
+    if any(k in t for k in ["organiza", "planifica", "plan de estudio", "tarea", "estudiar", "repasar", "calendario", "horario"]):
+        return "CU1"
+
+    # Default: explicar
+    return "CU2"
+
+
+def resolve_role(conn, telegram_id: int, incoming_role: Optional[UserRole], text: str, cmd: str) -> UserRole:
+    """Resuelve rol sin exigir comando /soy_*.
+
+    Importante:
+    - Este rol se usa solo para mejorar prompts/enrutamiento.
+    - NO habilita permisos de comandos privilegiados del bot (eso debe controlarse en el bot o por allowlists).
+    """
+    if incoming_role:
+        return incoming_role
+
+    # BD (si existe)
+    try:
+        with conn.cursor() as cur:
+            cur.execute("SELECT role FROM users WHERE telegram_id = %s;", (telegram_id,))
+            row = cur.fetchone()
+            if row and row[0]:
+                try:
+                    return UserRole(str(row[0]))
+                except Exception:
+                    pass
+    except Exception:
+        pass
+
+    t = _normalize(text or "")
+
+    # pistas explícitas
+    if any(k in t for k in ["soy docente", "soy profesor", "soy profesora", "como docente", "como profesor", "como profesora"]):
+        return UserRole.teacher
+    if any(k in t for k in ["soy apoderado", "soy apoderada", "soy mama", "soy papa", "como apoderado", "como apoderada"]):
+        return UserRole.caregiver
+    if any(k in t for k in ["soy coordinador", "soy coordinadora", "equipo de convivencia", "encargado de convivencia", "encargada de convivencia"]):
+        return UserRole.coordinator
+
+    # heurística por comando/intención
+    if cmd in ("/resumen", "/quiz", "/adaptar", "/fuente"):
+        return UserRole.teacher
+    guess = infer_case_id_freeflow(text)
+    if guess in ("CU3", "CU4", "CU5", "CU7"):
+        return UserRole.teacher
+
+    return UserRole.student
 
 
 def extract_task_description(msg: MessageIn) -> str:
@@ -2003,50 +2076,56 @@ def log_interaction(
     conn,
     *,
     user_id: int,
-    role: UserRole,
-    course_id: Optional[int],
-    command: Optional[str],
+    role: Optional[str],
     case_id: Optional[str],
-    latency_ms: int,
+    command: Optional[str],
+    prompt_text: str,
+    reply_text: str,
     used_rag: bool,
     used_cag: bool,
     sensitive_flag: bool,
-    raw_query: str,
-    raw_reply: str,
+    latency_ms: int,
+    llm_model: Optional[str],
+    llm_prompt_tokens: Optional[int],
+    llm_completion_tokens: Optional[int],
+    settings: dict,
     experiment_tag: Optional[str] = None,
     extra: Optional[dict] = None,
-    llm_model: Optional[str] = None,
-    llm_prompt_tokens: Optional[int] = None,
-    llm_completion_tokens: Optional[int] = None,
 ) -> None:
-    import json
+    """
+    Registra interacción en interaction_logs.
+    - role: string (student/teacher/caregiver/coordinator) o None
+    - settings: dict completo (se guarda como jsonb)
+    - experiment_tag / extra: opcionales para investigación
+    """
     with conn.cursor() as cur:
         cur.execute(
             """
             INSERT INTO interaction_logs
-            (user_id, role, course_id, command, case_id,
+            (user_id, role, command, case_id,
              latency_ms, used_rag, used_cag, sensitive_flag,
              raw_query, raw_reply,
-             experiment_tag, extra,
+             settings, experiment_tag, extra,
              llm_model, llm_prompt_tokens, llm_completion_tokens)
-            VALUES (%s, %s::user_role, %s, %s, %s,
-                    %s, %s, %s, %s,
-                    %s, %s,
-                    %s, %s::jsonb,
-                    %s, %s, %s);
+            VALUES
+            (%s, %s::user_role, %s, %s,
+             %s, %s, %s, %s,
+             %s, %s,
+             %s::jsonb, %s, %s::jsonb,
+             %s, %s, %s);
             """,
             (
                 user_id,
-                role.value if hasattr(role, "value") else role,
-                course_id,
+                role,
                 command,
                 case_id,
                 latency_ms,
                 used_rag,
                 used_cag,
                 sensitive_flag,
-                raw_query,
-                raw_reply,
+                prompt_text,
+                reply_text,
+                json.dumps(settings or {}),
                 experiment_tag,
                 json.dumps(extra or {}),
                 llm_model,

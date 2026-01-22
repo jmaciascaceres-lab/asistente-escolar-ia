@@ -21,64 +21,72 @@ TELEGRAM_MODE = os.getenv("TELEGRAM_MODE", "polling").strip().lower()
 if not TOKEN:
     raise RuntimeError('TELEGRAM_BOT_TOKEN no está definido (revisa env_file/.env).')
 if not BACKEND_URL or 'localhost' in BACKEND_URL:
-    raise RuntimeError(f'BACKEND_URL inválida dentro de Docker: {BACKEND_URL}. Usa http://backend:8000/api/v1/messages')
-
-# Polling settings
-TELEGRAM_LONGPOLL_TIMEOUT = int(os.getenv("TELEGRAM_LONGPOLL_TIMEOUT", "50"))
-TELEGRAM_POLLING_LIMIT = int(os.getenv("TELEGRAM_POLLING_LIMIT", "100"))
-TELEGRAM_DROP_PENDING_UPDATES = os.getenv("TELEGRAM_DROP_PENDING_UPDATES", "false").strip().lower() in ("1", "true", "yes")
-
-allowed_updates_raw = os.getenv("TELEGRAM_ALLOWED_UPDATES", "").strip()
-TELEGRAM_ALLOWED_UPDATES: Optional[List[str]]
-if allowed_updates_raw:
-    TELEGRAM_ALLOWED_UPDATES = [x.strip() for x in allowed_updates_raw.split(",") if x.strip()]
-else:
-    TELEGRAM_ALLOWED_UPDATES = None  # None = Telegram enviará todos los updates
-
-if not TOKEN:
-    raise RuntimeError("TELEGRAM_BOT_TOKEN no está definido en .env")
+    raise RuntimeError(f'BACKEND_URL inválida dentro de contenedor: {BACKEND_URL}')
 
 BASE_URL = f"https://api.telegram.org/bot{TOKEN}"
-
 OFFSET_FILE = os.getenv("TELEGRAM_OFFSET_FILE", ".telegram_offset.json")
 
+BOT_DEBUG = os.getenv("BOT_DEBUG", "0").strip() in ("1", "true", "True", "yes", "Y")
+TELEGRAM_ALLOWED_UPDATES = os.getenv("TELEGRAM_ALLOWED_UPDATES", "message,callback_query")
+TELEGRAM_LONGPOLL_TIMEOUT = int(os.getenv("TELEGRAM_LONGPOLL_TIMEOUT", "50"))
+TELEGRAM_POLLING_LIMIT = int(os.getenv("TELEGRAM_POLLING_LIMIT", "100"))
+TELEGRAM_DROP_PENDING_UPDATES = os.getenv("TELEGRAM_DROP_PENDING_UPDATES", "true").strip().lower() in ("1", "true", "yes")
+
 def _parse_int_set(csv: str) -> set[int]:
-    """Parsea CSV de enteros (ej: '123,456') -> {123,456}. Ignora vacíos e inválidos."""
-    out: set[int] = set()
-    for raw in (csv or "").split(","):
-        raw = raw.strip()
-        if not raw:
+    if not csv:
+        return set()
+    out = set()
+    for x in csv.split(","):
+        x = x.strip()
+        if not x:
             continue
         try:
-            out.add(int(raw))
-        except ValueError:
-            continue
+            out.add(int(x))
+        except Exception:
+            pass
     return out
 
-TELEGRAM_MAX_USERS = int(os.getenv("TELEGRAM_MAX_USERS", "30") or 30)
+TELEGRAM_MAX_USERS = int(os.getenv("TELEGRAM_MAX_USERS", "32") or 32)
+
+# Allowlist (general) — en freeflow se puede desactivar con TELEGRAM_OPEN_ACCESS=1
 TELEGRAM_ALLOWLIST_USER_IDS = _parse_int_set(os.getenv("TELEGRAM_ALLOWLIST_USER_IDS", ""))
 TELEGRAM_ALLOWLIST_CHAT_IDS = _parse_int_set(os.getenv("TELEGRAM_ALLOWLIST_CHAT_IDS", ""))  # útil si quieres habilitar un grupo
+TELEGRAM_OPEN_ACCESS = os.getenv("TELEGRAM_OPEN_ACCESS", "0").strip().lower() in ("1", "true", "yes")
 
-TELEGRAM_DENY_MESSAGE = os.getenv(
-    "TELEGRAM_DENY_MESSAGE",
-    "Acceso restringido a este bot. Si necesitas acceso, solicita tu habilitación al administrador."
-)
+# Comandos privilegiados (CU8: alertas). Por seguridad, mantener controlado.
+TELEGRAM_ENABLE_COORDINATOR_COMMANDS = os.getenv("TELEGRAM_ENABLE_COORDINATOR_COMMANDS", "0").strip().lower() in ("1", "true", "yes")
+TELEGRAM_COORDINATOR_USER_IDS = _parse_int_set(os.getenv("TELEGRAM_COORDINATOR_USER_IDS", ""))
+TELEGRAM_COORDINATOR_CHAT_IDS = _parse_int_set(os.getenv("TELEGRAM_COORDINATOR_CHAT_IDS", ""))
 
-if (TELEGRAM_ALLOWLIST_USER_IDS or TELEGRAM_ALLOWLIST_CHAT_IDS) and TELEGRAM_MAX_USERS > 0:
+if TELEGRAM_MAX_USERS > 0:
     if len(TELEGRAM_ALLOWLIST_USER_IDS) > TELEGRAM_MAX_USERS:
         raise RuntimeError(
             f"Allowlist excede TELEGRAM_MAX_USERS: {len(TELEGRAM_ALLOWLIST_USER_IDS)} > {TELEGRAM_MAX_USERS}"
         )
 
-
 def is_allowed_user(from_id: int, chat_id: int) -> bool:
     """Regla:
+    - Si TELEGRAM_OPEN_ACCESS=1: permite a todos.
     - Si existe allowlist (user_ids o chat_ids), SOLO permite a quienes estén listados.
-    - Si allowlist está vacía, permite a todos (modo abierto).
+    - Si allowlist está vacía, permite a todos.
     """
+    if TELEGRAM_OPEN_ACCESS:
+        return True
     if TELEGRAM_ALLOWLIST_USER_IDS or TELEGRAM_ALLOWLIST_CHAT_IDS:
         return (from_id in TELEGRAM_ALLOWLIST_USER_IDS) or (chat_id in TELEGRAM_ALLOWLIST_CHAT_IDS)
     return True
+
+def is_coordinator_allowed(from_id: int, chat_id: int) -> bool:
+    """Control de acceso para comandos de convivencia/alertas (CU8).
+    - Si TELEGRAM_ENABLE_COORDINATOR_COMMANDS es false: deshabilita el set completo.
+    - Si está habilitado: permite solo IDs/chats listados en TELEGRAM_COORDINATOR_*.
+    """
+    if not TELEGRAM_ENABLE_COORDINATOR_COMMANDS:
+        return False
+    if TELEGRAM_COORDINATOR_USER_IDS or TELEGRAM_COORDINATOR_CHAT_IDS:
+        return (from_id in TELEGRAM_COORDINATOR_USER_IDS) or (chat_id in TELEGRAM_COORDINATOR_CHAT_IDS)
+    # Si se habilitó pero no hay lista, por seguridad NO abrir.
+    return False
 
 def load_offset() -> int | None:
     try:
@@ -87,7 +95,6 @@ def load_offset() -> int | None:
     except Exception:
         return None
 
-
 def save_offset(offset: int) -> None:
     try:
         with open(OFFSET_FILE, "w", encoding="utf-8") as f:
@@ -95,78 +102,35 @@ def save_offset(offset: int) -> None:
     except Exception as e:
         print("[offset_save_error]", repr(e))
 
-
 def tg_api(method: str, params: dict | None = None, json_body: dict | None = None, timeout: float = 30.0) -> dict:
     url = f"{BASE_URL}/{method}"
-    try:
-        if json_body is not None:
-            r = requests.post(url, json=json_body, timeout=timeout)
-        else:
-            r = requests.get(url, params=params, timeout=timeout)
-        data = r.json()
-        if not data.get("ok"):
-            print(f"[telegram_api_error] method={method} status={r.status_code} body={str(data)[:2000]}")
-        return data
-    except Exception as e:
-        print(f"[telegram_api_exception] method={method} error={repr(e)}")
-        return {"ok": False, "error": str(e)}
-
+    if json_body is not None:
+        r = requests.post(url, json=json_body, timeout=timeout)
+    else:
+        r = requests.get(url, params=params, timeout=timeout)
+    r.raise_for_status()
+    return r.json()
 
 def ensure_no_webhook():
-    """
-    Para long-polling, es buena práctica borrar cualquier webhook previo.
-    Telegram permite drop_pending_updates en deleteWebhook para limpiar cola.
-    """
-    # getWebhookInfo (diagnóstico)
-    info = tg_api("getWebhookInfo", timeout=15)
-    if info.get("ok"):
-        url = (info.get("result") or {}).get("url")
-        pending = (info.get("result") or {}).get("pending_update_count")
-        print(f"[webhook_info] url={url!r} pending_update_count={pending}")
+    try:
+        info = tg_api("getWebhookInfo")
+        url = info.get("result", {}).get("url")
+        if url:
+            print(f"[webhook] encontrado url={url}, desactivando webhook...")
+            tg_api("deleteWebhook", params={"drop_pending_updates": "true"})
+    except Exception as e:
+        print("[webhook_error]", repr(e))
 
-    # deleteWebhook (con o sin drop_pending_updates)
-    payload = {"drop_pending_updates": True} if TELEGRAM_DROP_PENDING_UPDATES else {}
-    res = tg_api("deleteWebhook", json_body=payload if payload else {}, timeout=15)
-    if res.get("ok"):
-        print(f"[webhook_deleted] drop_pending_updates={TELEGRAM_DROP_PENDING_UPDATES}")
-    else:
-        print(f"[webhook_delete_failed] drop_pending_updates={TELEGRAM_DROP_PENDING_UPDATES} res={res}")
-
-
-def get_updates(offset: int | None = None) -> list[dict]:
-    params: dict = {
-        "timeout": TELEGRAM_LONGPOLL_TIMEOUT,
-        "limit": TELEGRAM_POLLING_LIMIT,
-    }
-    if offset is not None:
-        params["offset"] = offset
-    if TELEGRAM_ALLOWED_UPDATES is not None:
-        params["allowed_updates"] = json.dumps(TELEGRAM_ALLOWED_UPDATES)  # Telegram espera JSON-serialized array
-
-    # Requests timeout debe ser > longpoll timeout (margen)
-    req_timeout = TELEGRAM_LONGPOLL_TIMEOUT + 10
-    resp = requests.get(f"{BASE_URL}/getUpdates", params=params, timeout=req_timeout)
-    data = resp.json()
-    if not data.get("ok"):
-        print("[get_updates_error]", data)
-        return []
-    return data.get("result", [])
-
-
-def send_message(chat_id: int, text: str) -> dict:
-    payload = {"chat_id": chat_id, "text": text}
-    # timeout corto; si Telegram no responde, no queremos bloquear el worker
-    resp = requests.post(f"{BASE_URL}/sendMessage", json=payload, timeout=20)
-    data = resp.json()
-    if not data.get("ok"):
-        print("Error al enviar mensaje:", data)
-    return data
-
+def send_message(chat_id: int, text: str):
+    try:
+        tg_api("sendMessage", json_body={"chat_id": chat_id, "text": text})
+    except Exception as e:
+        print("[send_error]", repr(e))
 
 def normalize_command(cmd: str) -> str:
     """
-    Normaliza comandos Telegram:
-    - Quita @botname: /quiz@MiBot -> /quiz
+    Normaliza:
+    - /quiz@MiBot -> /quiz
     - Fuerza minúsculas
     """
     cmd = (cmd or "").strip()
@@ -175,124 +139,31 @@ def normalize_command(cmd: str) -> str:
     cmd = cmd.split("@", 1)[0]
     return cmd.lower()
 
-
-user_roles: Dict[int, str] = {}  # telegram_id -> role ("student", "teacher", etc.)
-
-def get_start_message_for_role(role: str) -> str:
-    if role == "teacher":
-        return (
-            "Hola 👋, soy el Asistente Escolar IA para docentes.\n\n"
-            "Soy un prototipo en desarrollo que te ayuda a:\n"
-            "• Consultar fuentes normativas e inclusivas (/fuente)\n"
-            "• Generar pre-resúmenes para reuniones o clases (/resumen)\n"
-            "• Crear preguntas de evaluación formativa (/quiz)\n"
-            "• Proponer adaptaciones de actividades con apoyos DUA (/adaptar)\n\n"
-            "Recuerda:\n"
-            "• No reemplazo tu criterio profesional ni la lectura directa de la normativa.\n"
-            "• Estoy en fase de prueba, por lo que algunas respuestas pueden ser incompletas.\n"
-            "• Usa siempre tu juicio docente y el apoyo del equipo de convivencia/PIE."
-        )
-
-    if role == "caregiver":
-        return (
-            "Hola 👋, soy el Asistente Escolar IA para madres, padres y apoderados.\n\n"
-            "En esta etapa piloto puedo ayudarte a:\n"
-            "• Entender conceptos generales como PIE y educación inclusiva (/pie)\n"
-            "• Recibir orientaciones breves para acompañar el estudio o el bienestar (/apoyo)\n"
-            "• Más adelante: revisar un reporte semanal simplificado (/reporte_semana)\n\n"
-            "Importante:\n"
-            "• No reemplazo la comunicación directa con el colegio.\n"
-            "• No soy un servicio de emergencia ni de atención clínica."
-        )
-
-    if role == "coordinator":
-        return (
-            "Hola 👋, soy el Asistente Escolar IA para equipos de convivencia e inclusión.\n\n"
-            "Puedes usarme para:\n"
-            "• Revisar alertas generadas a partir de mensajes sensibles de estudiantes (/alertas)\n"
-            "• Ver el detalle de una alerta específica (/detalle_alerta ID)\n"
-            "• Consultar normativa o lineamientos de inclusión y convivencia (/fuente, /resumen)\n\n"
-            "Recuerda:\n"
-            "• Las alertas son solo un apoyo inicial; la evaluación la realizan ustedes.\n"
-            "• Este sistema está en piloto, por lo que conviene revisar los procesos internos antes de tomar decisiones."
-        )
-
-    # Por defecto: estudiante
+def get_start_message() -> str:
     return (
-        "Hola 👋, soy el Asistente Escolar IA.\n\n"
-        "Puedo ayudarte a:\n"
-        "• Organizar tus tareas y estudiar mejor (/tarea)\n"
-        "• Entender temas de clases con explicaciones guiadas (/explicar)\n\n"
-        "Importante:\n"
-        "• No reemplazo a tus profes, solo los apoyo.\n"
-        "• Si te sientes muy mal o en peligro, habla con una persona adulta de confianza. "
-        "El bot NO es para emergencias.\n\n"
-        "Si eres profesor, escribe /soy_docente.\n"
-        "Si eres madre/padre o apoderado, escribe /soy_apoderado.\n"
-        "Si eres coordinador/a o equipo de convivencia, escribe /soy_coordinador."
+        "Hola, soy el Asistente Escolar IA.\n\n"
+        "Puedes escribirme en lenguaje natural, sin comandos.\n"
+        "Ejemplos:\n"
+        "• “Explícame el ciclo del agua para 6° básico”\n"
+        "• “Necesito un quiz de fotosíntesis con 5 preguntas”\n"
+        "• “Adapta esta evaluación con enfoque DUA para un estudiante con TDAH”\n"
+        "• “Ayúdame a organizar un plan de estudio para una prueba el lunes”\n\n"
+        "Atajos (opcionales): /tarea, /explicar, /resumen, /quiz, /adaptar, /fuente, /modo"
     )
 
-
-def get_help_message_for_role(role: str) -> str:
-    if role == "teacher":
-        return (
-            "Comandos para docentes:\n\n"
-            "• /fuente + texto\n"
-            "  Buscar fragmentos de normativa/inclusión para una situación concreta.\n"
-            "  Ej: /fuente Estudiante autista tuvo un episodio complejo en recreo\n\n"
-            "• /resumen + tema\n"
-            "  Generar un pre-resumen con ideas clave desde documentos relevantes.\n"
-            "  Ej: /resumen DUA en evaluación de lectura\n\n"
-            "• /quiz + tema\n"
-            "  Crear preguntas de evaluación formativa.\n"
-            "  Ej: /quiz ciclo del agua 6° básico\n\n"
-            "• /adaptar + descripción de actividad\n"
-            "  Proponer adaptaciones y apoyos DUA.\n"
-            "  Ej: /adaptar Prueba escrita de historia para 8° básico con estudiante con TDAH\n\n"
-            "• /reporte_semana\n"
-            "  Ver un resumen de cómo has usado el asistente en los últimos 7 días "
-            "(comandos más usados y recordatorios).\n"
-        )
-
-    if role == "caregiver":
-        return (
-            "Comandos para madres, padres y apoderados:\n\n"
-            "• /pie + pregunta\n"
-            "  Explicaciones simples sobre PIE, inclusión educativa, etc.\n\n"
-            "• /apoyo + situación\n"
-            "  Orientaciones breves para acompañar el estudio y el bienestar.\n\n"
-            "• /reporte_semana\n"
-            "  Ver un resumen simple del uso de este chat en los últimos 7 días.\n"
-            "  Más adelante, si el colegio lo autoriza, se podrá vincular al uso académico "
-            "del asistente por parte de tu hijo o hija.\n"
-        )
-
-    if role == "coordinator":
-        return (
-            "Comandos para coordinadores/equipos de convivencia e inclusión:\n\n"
-            "• /alertas\n"
-            "  Lista las alertas pendientes generadas por mensajes sensibles de estudiantes.\n\n"
-            "• /detalle_alerta ID\n"
-            "  Muestra el detalle de una alerta específica.\n\n"
-            "• /fuente + texto\n"
-            "  Busca fragmentos normativos o lineamientos relevantes.\n\n"
-            "• /resumen + tema\n"
-            "  Pre-resumen de documentos para preparar reuniones o planes de apoyo.\n\n"
-            "• /alerta_ayuda ID\n"
-            "  Entrega orientaciones generales para que el equipo revise una alerta concreta.\n\n"
-        )
-
-    # Estudiante por defecto
+def get_help_message() -> str:
     return (
-        "Comandos principales para estudiantes:\n\n"
+        "Puedes usar el asistente sin comandos.\n\n"
+        "Atajos (opcionales):\n"
         "• /tarea + descripción\n"
-        "  Genera un plan para organizar tu tarea, estudiar una prueba o planificar la semana.\n"
-        "  Ej: /tarea Estudiar para la prueba de fracciones del lunes\n\n"
         "• /explicar + tema\n"
-        "  Te guía para entender mejor un contenido y hacer un repaso.\n"
-        "  Ej: /explicar ciclo del agua\n\n"
-        "Más adelante podrás configurar opciones como modo de baja estimulación.\n"
-        "Si eres profesor o apoderado, recuerda usar /soy_docente o /soy_apoderado."
+        "• /resumen + tema\n"
+        "• /quiz + tema\n"
+        "• /adaptar + descripción\n"
+        "• /fuente + consulta\n"
+        "• /modo baja|alta\n\n"
+        "Nota: los comandos de alertas (/alertas, /detalle_alerta, /alerta_ayuda) "
+        "se mantienen restringidos y pueden estar deshabilitados en esta versión."
     )
 
 def main():
@@ -308,93 +179,69 @@ def main():
     offset = load_offset()
     print(f"[offset] starting_offset={offset}")
 
+    if TELEGRAM_DROP_PENDING_UPDATES:
+        try:
+            print("[drop_pending] deleteWebhook(drop_pending_updates=true)")
+            tg_api("deleteWebhook", params={"drop_pending_updates": "true"})
+        except Exception as e:
+            print("[drop_pending_error]", repr(e))
+
+    allowed_updates = [x.strip() for x in TELEGRAM_ALLOWED_UPDATES.split(",") if x.strip()]
+
     while True:
         try:
-            updates = get_updates(offset)
-            for update in updates:
-                offset = update["update_id"] + 1
+            params = {
+                "timeout": TELEGRAM_LONGPOLL_TIMEOUT,
+                "limit": TELEGRAM_POLLING_LIMIT,
+                "allowed_updates": json.dumps(allowed_updates),
+            }
+            if offset is not None:
+                params["offset"] = offset
+
+            data = tg_api("getUpdates", params=params, timeout=TELEGRAM_LONGPOLL_TIMEOUT + 10)
+            results = data.get("result", [])
+
+            for upd in results:
+                offset = upd["update_id"] + 1
                 save_offset(offset)
 
-                if "message" not in update:
-                    continue
-                message = update["message"]
-
-                if "text" not in message:
+                msg = upd.get("message") or upd.get("callback_query", {}).get("message")
+                if not msg:
                     continue
 
-                text = message["text"].strip()
-                chat_id = message["chat"]["id"]
-                from_id = message["from"]["id"]
+                chat_id = msg["chat"]["id"]
+                from_id = msg.get("from", {}).get("id") or msg.get("chat", {}).get("id") or 0
 
-                # /id siempre disponible (para que el usuario pueda enviarte su identificador y lo agregues a la allowlist)
-                if text == "/id":
-                    send_message(chat_id, f"user_id={from_id}\nchat_id={chat_id}")
+                # Texto
+                text = ""
+                if "text" in msg:
+                    text = msg["text"].strip()
+                elif "caption" in msg:
+                    text = (msg["caption"] or "").strip()
+
+                if not text:
                     continue
 
-                # Allowlist (si está configurada, restringe el acceso)
+                # Control de acceso general
                 if not is_allowed_user(from_id, chat_id):
-                    send_message(chat_id, TELEGRAM_DENY_MESSAGE + "\n\nTip: envíame /id para obtener tu identificador.")
-                    continue
-
-                # --- comandos de rol ---
-                if text.startswith("/soy_estudiante"):
-                    user_roles[from_id] = "student"
-                    requests.post(
-                        f"{BACKEND_URL.rsplit('/api', 1)[0]}/api/v1/users/set_role",
-                        json={"telegram_id": from_id, "role": "student"},
-                        timeout=10,
-                    )
-                    send_message(chat_id, "Perfecto, te registraré como estudiante.")
-                    continue
-
-                if text.startswith("/soy_docente"):
-                    user_roles[from_id] = "teacher"
-                    requests.post(
-                        f"{BACKEND_URL.rsplit('/api', 1)[0]}/api/v1/users/set_role",
-                        json={"telegram_id": from_id, "role": "teacher"},
-                        timeout=10,
-                    )
-                    send_message(chat_id, "Listo, te registraré como docente.")
-                    continue
-
-                if text.startswith("/soy_apoderado"):
-                    user_roles[from_id] = "caregiver"
-                    requests.post(
-                        f"{BACKEND_URL.rsplit('/api', 1)[0]}/api/v1/users/set_role",
-                        json={"telegram_id": from_id, "role": "caregiver"},
-                        timeout=10,
-                    )
-                    send_message(chat_id, "Anotado, te registraré como madre/padre o apoderado.")
-                    continue
-
-                if text.startswith("/soy_coordinador") or text.startswith("/soy_coordinadora"):
-                    user_roles[from_id] = "coordinator"
-                    requests.post(
-                        f"{BACKEND_URL.rsplit('/api', 1)[0]}/api/v1/users/set_role",
-                        json={"telegram_id": from_id, "role": "coordinator"},
-                        timeout=10,
-                    )
-                    send_message(chat_id, "Te registraré como coordinador/a o encargado/a.")
+                    send_message(chat_id, "Lo siento, este bot está en piloto y tu acceso no está habilitado.")
                     continue
 
                 # --- /start y /ayuda ---
                 if text.startswith("/start"):
-                    role = user_roles.get(from_id, "student")
-                    send_message(chat_id, get_start_message_for_role(role))
+                    send_message(chat_id, get_start_message())
                     continue
 
                 if text.startswith("/ayuda"):
-                    role = user_roles.get(from_id, "student")
-                    send_message(chat_id, get_help_message_for_role(role))
+                    send_message(chat_id, get_help_message())
                     continue
 
-                # --- /alertas (coordinador) ---
+                # --- /alertas (restringido) ---
                 if text.startswith("/alertas"):
-                    role = user_roles.get(from_id, "student")
-                    if role != "coordinator":
+                    if not is_coordinator_allowed(from_id, chat_id):
                         send_message(
                             chat_id,
-                            "El comando /alertas está pensado para coordinadores o equipos de convivencia."
+                            "El comando /alertas está restringido para equipos autorizados o puede estar deshabilitado."
                         )
                         continue
 
@@ -415,24 +262,22 @@ def main():
 
                     alerts = data_alerts or []
                     if not alerts:
-                        send_message(chat_id, "No hay alertas pendientes por ahora.")
+                        send_message(chat_id, "No hay alertas pendientes.")
                         continue
 
                     lines = ["Alertas pendientes:"]
-                    for a in alerts[:10]:
-                        lines.append(
-                            f"- ID {a['alert_id']} | tipo: {a['alert_type']} | estudiante_id: {a['student_id']} | estado: {a['status']}"
-                        )
+                    for a in alerts:
+                        lines.append(f"• ID {a.get('id')}: {a.get('summary')}")
+                    lines.append("\nUsa /detalle_alerta ID para ver el detalle.")
                     send_message(chat_id, "\n".join(lines))
                     continue
 
-                # --- /detalle_alerta ID (coordinador) ---
+                # --- /detalle_alerta ID (restringido) ---
                 if text.startswith("/detalle_alerta"):
-                    role = user_roles.get(from_id, "student")
-                    if role != "coordinator":
+                    if not is_coordinator_allowed(from_id, chat_id):
                         send_message(
                             chat_id,
-                            "El comando /detalle_alerta está pensado para coordinadores o equipos de convivencia."
+                            "El comando /detalle_alerta está restringido para equipos autorizados o puede estar deshabilitado."
                         )
                         continue
 
@@ -444,7 +289,7 @@ def main():
                     try:
                         alert_id = int(parts[1].strip())
                     except ValueError:
-                        send_message(chat_id, "El ID de la alerta debe ser un número.")
+                        send_message(chat_id, "El ID de la alerta debe ser un número entero.")
                         continue
 
                     try:
@@ -452,39 +297,35 @@ def main():
                             f"{BACKEND_URL.rsplit('/api', 1)[0]}/api/v1/alerts/{alert_id}",
                             timeout=20,
                         )
-                        if resp.status_code == 404:
-                            send_message(chat_id, f"No encontré la alerta con ID {alert_id}.")
-                            continue
                         if resp.status_code != 200:
-                            send_message(chat_id, "No pude obtener el detalle de la alerta.")
+                            send_message(chat_id, "No pude obtener el detalle de esa alerta.")
                             continue
-                        data_alert = resp.json()
+                        a = resp.json()
                     except Exception as e:
-                        print("Error obteniendo detalle de alerta:", e)
-                        send_message(chat_id, "No pude obtener el detalle de la alerta.")
+                        print("Error obteniendo detalle alerta:", e)
+                        send_message(chat_id, "No pude obtener el detalle de esa alerta.")
                         continue
 
-                    msg_lines = [
-                        f"Detalle alerta ID {data_alert['alert_id']}:",
-                        f"- Tipo: {data_alert['alert_type']}",
-                        f"- Estado: {data_alert['status']}",
-                        f"- Estudiante_id: {data_alert['student_id']}",
-                        f"- Curso_id: {data_alert['course_id']}",
-                        f"- Creada: {data_alert['created_at']}",
-                        "",
-                        "Resumen del mensaje:",
-                        data_alert["summary"],
-                    ]
-                    send_message(chat_id, "\n".join(msg_lines))
+                    msg_txt = (
+                        f"Alerta ID {a.get('id')}\n"
+                        f"Estado: {a.get('status')}\n"
+                        f"Creada: {a.get('created_at')}\n\n"
+                        f"Resumen: {a.get('summary')}\n\n"
+                        f"Detalle:\n{a.get('detail')}\n\n"
+                        "Acciones:\n"
+                        f"• /alerta_en_revision {a.get('id')}\n"
+                        f"• /alerta_resuelta {a.get('id')}\n"
+                        f"• /alerta_ayuda {a.get('id')}\n"
+                    )
+                    send_message(chat_id, msg_txt)
                     continue
 
-                # --- /alerta_ayuda ID (coordinador) ---
+                # --- /alerta_ayuda ID (restringido) ---
                 if text.startswith("/alerta_ayuda"):
-                    role = user_roles.get(from_id, "student")
-                    if role != "coordinator":
+                    if not is_coordinator_allowed(from_id, chat_id):
                         send_message(
                             chat_id,
-                            "El comando /alerta_ayuda está pensado para coordinadores o equipos de convivencia."
+                            "El comando /alerta_ayuda está restringido para equipos autorizados o puede estar deshabilitado."
                         )
                         continue
 
@@ -496,95 +337,64 @@ def main():
                     try:
                         alert_id = int(parts[1].strip())
                     except ValueError:
-                        send_message(chat_id, "El ID de la alerta debe ser un número.")
+                        send_message(chat_id, "El ID de la alerta debe ser un número entero.")
                         continue
 
-                    # Traer detalle de la alerta
                     try:
-                        resp = requests.get(
-                            f"{BACKEND_URL.rsplit('/api', 1)[0]}/api/v1/alerts/{alert_id}",
-                            timeout=20,
+                        resp = requests.post(
+                            f"{BACKEND_URL.rsplit('/api', 1)[0]}/api/v1/alerts/{alert_id}/help",
+                            timeout=30,
                         )
-                        if resp.status_code == 404:
-                            send_message(chat_id, f"No encontré la alerta con ID {alert_id}.")
-                            continue
                         if resp.status_code != 200:
-                            send_message(chat_id, "No pude obtener el detalle de la alerta para entregar orientación.")
+                            send_message(chat_id, "No pude generar orientaciones para esa alerta.")
                             continue
-                        data_alert = resp.json()
+                        payload = resp.json()
+                        send_message(chat_id, payload.get("help_text", "Sin respuesta."))
                     except Exception as e:
-                        print("Error obteniendo detalle de alerta:", e)
-                        send_message(chat_id, "No pude obtener el detalle de la alerta en este momento.")
-                        continue
-
-                    # Orientación operativa (texto plano, sin LLM)
-                    msg_lines = [
-                        f"Orientación para revisar alerta ID {data_alert['alert_id']}",
-                        f"- Tipo: {data_alert['alert_type']}",
-                        f"- Estado: {data_alert['status']}",
-                        f"- Estudiante_id: {data_alert['student_id']} | Curso_id: {data_alert['course_id']}",
-                        "",
-                        "Checklist sugerido (equipo humano):",
-                        "1) Verificar urgencia: si hay riesgo inmediato, activar protocolo del establecimiento.",
-                        "2) Revisar el mensaje original y el contexto (no basarse solo en el resumen).",
-                        "3) Coordinar contacto con adulto responsable (profesor jefe/convivencia/PIE) según protocolo.",
-                        "4) Registrar acciones y acuerdos (trazabilidad mínima).",
-                        "5) Definir seguimiento (fecha, responsable, señales a monitorear).",
-                        "",
-                        "Resumen registrado:",
-                        data_alert.get("summary", "(sin resumen)"),
-                    ]
-                    send_message(chat_id, "\n".join(msg_lines))
+                        print("Error generando ayuda:", e)
+                        send_message(chat_id, "No pude generar orientaciones para esa alerta.")
                     continue
 
-                # --- /alerta_en_revision ID (coordinador) ---
+                # --- /alerta_en_revision ID (restringido) ---
                 if text.startswith("/alerta_en_revision"):
-                    role = user_roles.get(from_id, "student")
-                    if role != "coordinator":
+                    if not is_coordinator_allowed(from_id, chat_id):
                         send_message(
                             chat_id,
-                            "El comando /alerta_en_revision está pensado para coordinadores o equipos de convivencia."
+                            "Este comando está restringido para equipos autorizados o puede estar deshabilitado."
                         )
                         continue
 
                     parts = text.split(maxsplit=1)
                     if len(parts) < 2:
-                        send_message(chat_id, "Uso: /alerta_en_revision ID.")
+                        send_message(chat_id, "Uso: /alerta_en_revision ID (por ejemplo, /alerta_en_revision 3).")
                         continue
-
                     try:
                         alert_id = int(parts[1].strip())
                     except ValueError:
-                        send_message(chat_id, "El ID de la alerta debe ser un número.")
+                        send_message(chat_id, "El ID de la alerta debe ser un número entero.")
                         continue
 
                     try:
                         resp = requests.post(
                             f"{BACKEND_URL.rsplit('/api', 1)[0]}/api/v1/alerts/{alert_id}/status",
                             json={"status": "in_review"},
-                            timeout=15,
+                            timeout=20,
                         )
-                        if resp.status_code == 404:
-                            send_message(chat_id, f"No encontré la alerta con ID {alert_id}.")
-                            continue
                         if resp.status_code != 200:
                             send_message(chat_id, "No pude actualizar el estado de la alerta.")
                             continue
+                        send_message(chat_id, "Alerta marcada como en revisión.")
                     except Exception as e:
                         print("Error actualizando alerta:", e)
                         send_message(chat_id, "No pude actualizar el estado de la alerta.")
-                        continue
-
-                    send_message(chat_id, f"La alerta {alert_id} ha sido marcada como en revisión.")
                     continue
 
-                # --- /alerta_resuelta ID (coordinador) ---
+                # --- /alerta_resuelta ID (restringido) ---
                 if text.startswith("/alerta_resuelta"):
-                    role = user_roles.get(from_id, "student")
-                    if role != "coordinator":
+                    if not is_coordinator_allowed(from_id, chat_id):
                         send_message(
                             chat_id,
-                            "El comando /alerta_resuelta está pensado para coordinadores o equipos de convivencia."
+                            "Este comando está restringido para equipos autorizados o puede estar deshabilitado."
                         )
                         continue
 
@@ -592,130 +402,69 @@ def main():
                     if len(parts) < 2:
                         send_message(chat_id, "Uso: /alerta_resuelta ID (por ejemplo, /alerta_resuelta 3).")
                         continue
-
                     try:
                         alert_id = int(parts[1].strip())
                     except ValueError:
-                        send_message(chat_id, "El ID de la alerta debe ser un número.")
+                        send_message(chat_id, "El ID de la alerta debe ser un número entero.")
                         continue
 
                     try:
                         resp = requests.post(
                             f"{BACKEND_URL.rsplit('/api', 1)[0]}/api/v1/alerts/{alert_id}/status",
                             json={"status": "resolved"},
-                            timeout=15,
+                            timeout=20,
                         )
-                        if resp.status_code == 404:
-                            send_message(chat_id, f"No encontré la alerta con ID {alert_id}.")
-                            continue
                         if resp.status_code != 200:
                             send_message(chat_id, "No pude actualizar el estado de la alerta.")
                             continue
+                        send_message(chat_id, "Alerta marcada como resuelta.")
                     except Exception as e:
                         print("Error actualizando alerta:", e)
                         send_message(chat_id, "No pude actualizar el estado de la alerta.")
-                        continue
-
-                    send_message(chat_id, f"La alerta {alert_id} ha sido marcada como resuelta.")
                     continue
 
-                 # --- resto de mensajes: van al backend /api/v1/messages ---
-                role = user_roles.get(from_id, "student")
+                # --- resto de mensajes: van al backend /api/v1/messages ---
 
                 settings = {}
-
-                # Si es docente y estamos en el piloto, marcamos la interacción
-                if role == "teacher":
-                    settings["experiment_tag"] = EXPERIMENT_TAG_DOCENTES
-                    settings["extra"] = {**EXTRA_BASE_DOCENTES}
 
                 # Comando principal (si parte con "/")
                 raw_cmd = text.split()[0] if text.split() else ""
                 command = normalize_command(raw_cmd)
 
-                print(f"[telegram_bot] incoming text={text!r} raw_cmd={raw_cmd!r} normalized_cmd={command!r} role={role}")
-                print(f"[backend] role={role} command={command} text_first={text.split()[0] if text else None}")
-
-                # 1) Mensaje preliminar para comandos "pesados" (usan RAG + LLM)
-                heavy_commands = {"/explicar", "/quiz", "/adaptar", "/resumen", "/fuente"}
-                if command in heavy_commands:
-                    send_message(
-                        chat_id,
-                        "Estoy procesando tu solicitud, dame unos segundos..."
-                    )
+                print(f"[telegram_bot] incoming text={text!r} raw_cmd={raw_cmd!r} normalized_cmd={command!r}")
+                print(f"[backend_url] {BACKEND_URL}")
 
                 backend_payload = {
                     "telegram_id": from_id,
-                    "role": role,
-                    "command": command,
+                    "role": None,
+                    "command": (command if command else None),
                     "text": text,
                     "course_id": None,
                     "settings": settings,
                 }
 
-                # ---- Ajustes de diagnóstico (dev) ----
-                BOT_DEBUG = os.getenv("BOT_DEBUG", "1") == "1"
-                BACKEND_TIMEOUT_CONNECT = float(os.getenv("BACKEND_TIMEOUT_CONNECT", "10"))
-                BACKEND_TIMEOUT_READ = float(os.getenv("BACKEND_TIMEOUT_READ", "600"))
-
-                # 2) Medir tiempo de respuesta total (bot → backend → bot)
-                t0 = time.time()
                 try:
                     resp = requests.post(
                         BACKEND_URL,
                         json=backend_payload,
-                        timeout=(BACKEND_TIMEOUT_CONNECT, BACKEND_TIMEOUT_READ),
+                        timeout=(10, 600),
                     )
-                    elapsed = time.time() - t0
+                    if resp.status_code != 200:
+                        send_message(chat_id, "Hubo un error procesando tu solicitud. Intenta de nuevo.")
+                        print("[backend_error]", resp.status_code, resp.text)
+                        continue
 
-                    if resp.status_code == 200:
-                        data = resp.json()
-                        reply_text = data.get(
-                            "reply_text",
-                            "Hubo un problema al generar la respuesta en el backend.",
-                        )
-                    else:
-                        # Intentar extraer detalle del backend
-                        detail = None
-                        try:
-                            detail = resp.json()
-                        except Exception:
-                            detail = resp.text
-
-                        print(f"[backend_error] status={resp.status_code} body={str(detail)[:2000]}")
-
-                        if BOT_DEBUG:
-                            reply_text = f"No pude procesar tu solicitud (backend {resp.status_code}).\nDetalle (dev): {str(detail)[:800]}"
-                        else:
-                            reply_text = "No pude procesar tu solicitud (error de servidor)."
-
-                except requests.exceptions.ReadTimeout as e:
-                    elapsed = time.time() - t0
-                    print("[backend_timeout] ReadTimeout:", repr(e))
-                    reply_text = (
-                        "El backend está tardando más de lo normal en responder. "
-                        "Intenta nuevamente en unos momentos."
-                    )
-
-                except requests.exceptions.ConnectionError as e:
-                    elapsed = time.time() - t0
-                    print("[backend_conn_error] ConnectionError:", repr(e))
-                    reply_text = "No pude conectar con el backend en este momento."
+                    out = resp.json()
+                    reply_text = out.get("reply_text", "(sin respuesta)")
+                    send_message(chat_id, reply_text)
 
                 except Exception as e:
-                    elapsed = time.time() - t0
-                    print("[backend_unknown_error] Exception:", repr(e))
-                    reply_text = "Ocurrió un error inesperado al llamar al backend."
-
-                # 3) Añadir tiempo de respuesta al final del mensaje
-                reply_text += f"\n\nTiempo de respuesta del asistente: {elapsed:.1f} segundos."
-
-                send_message(chat_id, reply_text)
-
+                    print("[backend_exception]", repr(e))
+                    send_message(chat_id, "No pude conectar con el backend en este momento. Intenta más tarde.")
 
         except Exception as e:
-            print("Error en el polling:", e)
-            time.sleep(5)
+            print("[poll_loop_error]", repr(e))
+            time.sleep(2)
 
 if __name__ == "__main__":
     main()
