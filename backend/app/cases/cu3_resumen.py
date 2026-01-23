@@ -1,5 +1,4 @@
 from typing import Tuple
-
 import os
 
 from ..rag_service import search_snippets
@@ -10,11 +9,10 @@ from ..utils_sources import build_sources_block_from_snippets, estimate_snippet_
 RAG_ENABLED = os.getenv("RAG_ENABLED", "true").lower() in ("1", "true", "yes")
 
 
-
 def _extract_resumen_query_from_msg(msg) -> str:
     text = (msg.text or "").strip()
     if text.startswith("/resumen"):
-        rest = text[len("/resumen"):].strip()
+        rest = text[len("/resumen") :].strip()
         return rest or "tu tema"
     return text or "tu tema"
 
@@ -26,25 +24,24 @@ def resumen_con_llm(msg) -> Tuple[str, dict]:
     """
     query = _extract_resumen_query_from_msg(msg)
 
-    # 1) Preferimos normativa / inclusión
-    preferred_types = ["normativa_nacional", "inclusion_autismo", "paec", "reglamento_interno"]
+    # 1) Recuperación (RAG) - solo si está habilitado
     snippets = []
-    for t in preferred_types:
-        snippets = search_snippets(query, filters={"doc_type": t}, k=4)
-        if snippets:
-            break
+    if RAG_ENABLED:
+        preferred_types = ["normativa_nacional", "inclusion_autismo", "paec", "reglamento_interno"]
+        for t in preferred_types:
+            snippets = search_snippets(query, filters={"doc_type": t}, k=4)
+            if snippets:
+                break
 
-    if not snippets:
-        snippets = search_snippets(query, filters={}, k=4)
+        if not snippets:
+            snippets = search_snippets(query, filters={}, k=4)
 
     # 2) Contexto para el LLM
     context_blocks = []
     for i, sn in enumerate(snippets, start=1):
         title = sn.get("title") or "sin título"
         content = sn.get("content") or ""
-        context_blocks.append(
-            f"[Fragmento {i}] Documento: {title}\n{content}"
-        )
+        context_blocks.append(f"[Fragmento {i}] Documento: {title}\n{content}")
     context_text = "\n\n".join(context_blocks)
 
     # 3) Prompt CU3
@@ -59,26 +56,27 @@ def resumen_con_llm(msg) -> Tuple[str, dict]:
         temperature=0.4,
     )
 
-    coverage = estimate_snippet_coverage(answer_text, snippets)
-    if snippets and coverage < MIN_COVERAGE_RATIO:
-        aviso = (
-            "Nota: este pre-resumen podría no estar muy alineado con los fragmentos concretos "
-            "que se recuperaron. Úsalo solo como guía inicial y revisa directamente los documentos "
-            "antes de tomar decisiones.\n\n"
-        )
-        answer_text = aviso + answer_text
+    # 4) Cobertura solo si hubo snippets
+    if snippets:
+        coverage = estimate_snippet_coverage(answer_text, snippets)
+        if coverage < MIN_COVERAGE_RATIO:
+            aviso = (
+                "Nota: este pre-resumen podría no estar muy alineado con los fragmentos concretos "
+                "que se recuperaron. Úsalo solo como guía inicial y revisa directamente los documentos "
+                "antes de tomar decisiones.\n\n"
+            )
+            answer_text = aviso + answer_text
 
+    # 5) Fuentes (solo si hay snippets)
     sources_block = build_sources_block_from_snippets(snippets)
     if sources_block:
-        answer_text = (
-            answer_text
-            #+ "\n\nDebajo puedes ver textualmente qué dicen los documentos usados (al menos en parte):\n\n"
-            + sources_block
-        )
+        answer_text = answer_text + sources_block
 
     llm_meta = {
         "llm_model": model_label,
         "llm_prompt_tokens": prompt_tokens,
         "llm_completion_tokens": completion_tokens,
+        "used_rag": bool(snippets),
+        "snippets_count": len(snippets),
     }
     return answer_text.strip(), llm_meta

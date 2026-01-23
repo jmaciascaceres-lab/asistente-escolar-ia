@@ -1,5 +1,5 @@
 from enum import Enum
-import time, re, unicodedata
+import time, re, unicodedata, threading
 import json, os
 from typing import Optional, List, Tuple, Dict    
 from .rag_service import search_documents, search_snippets, ingest_document
@@ -37,6 +37,8 @@ STIMULATION_DEFAULT = os.getenv("STIMULATION_DEFAULT", "alta").strip().lower()
 if STIMULATION_DEFAULT not in ("alta", "baja"):
     STIMULATION_DEFAULT = "alta"
 
+WARMUP_EMBEDDINGS = os.getenv("WARMUP_EMBEDDINGS", "1").strip().lower() in ("1", "true", "yes")
+RAG_ENABLED = os.getenv("RAG_ENABLED", "1").strip().lower() in ("1", "true", "yes")
 
 # ---------- Eventos de ciclo de vida ----------
 
@@ -45,9 +47,19 @@ def on_startup():
     init_db()
     print("-- DB inicializada")
 
-    print("-- Warmup embeddings...")
-    embed_texts(["warmup"])
-    print("-- Embeddings warmup OK")
+    if not WARMUP_EMBEDDINGS:
+        print("-- Warmup embeddings deshabilitado (WARMUP_EMBEDDINGS=0)")
+        return
+
+    def _warmup():
+        try:
+            print("-- Warmup embeddings (async)...")
+            embed_texts(["warmup"])
+            print("-- Embeddings warmup OK")
+        except Exception as e:
+            print(f"-- Embeddings warmup FAILED: {e!r}")
+
+    threading.Thread(target=_warmup, daemon=True).start()
 
 @app.on_event("shutdown")
 def on_shutdown():

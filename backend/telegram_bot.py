@@ -427,9 +427,9 @@ def main():
 
                 settings = {}
 
-                # Comando principal (si parte con "/")
+                # Comando principal (si parte con "/")+
                 raw_cmd = text.split()[0] if text.split() else ""
-                command = normalize_command(raw_cmd)
+                command = normalize_command(raw_cmd) if raw_cmd.startswith("/") else ""
 
                 print(f"[telegram_bot] incoming text={text!r} raw_cmd={raw_cmd!r} normalized_cmd={command!r}")
                 print(f"[backend_url] {BACKEND_URL}")
