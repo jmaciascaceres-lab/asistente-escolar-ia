@@ -6,9 +6,40 @@ Asistente Escolar IA es un prototipo de asistente conversacional con enfoque de 
 - Un backend FastAPI con lógica de casos de uso (CU1-CU8).
 - Un módulo RAG (Retrieval-Augmented Generation) sobre documentos MINEDUC / UNESCO / inclusión.
 - Una base de datos PostgreSQL para usuarios, interacciones y documentos.
-- Un LLM externo (Gemini) para generación de texto controlada.
+- Un LLM configurable (Gemini/OpenAI/Ollama) para generación de texto controlada (según variables de entorno).
 
 > Proyecto en fase de investigación/piloto. No reemplaza atención clínica ni protocolos formales de los establecimientos.
+
+---
+
+## Ramas del repositorio (main vs asist-freeflow)
+
+Este repositorio mantiene dos líneas de trabajo:
+
+### Rama oficial: `main` (estable, con flujo guiado por comandos/roles)
+- **Objetivo:** piloto/uso guiado con **selección explícita de rol** y **comandos** (ej. `/soy_docente`, `/quiz`, `/adaptar`, etc.).
+- **Cuándo usarla:** cuando necesitas un funcionamiento más “estructurado” (capacitaciones, pilotos controlados, pruebas por rol, trazabilidad por caso de uso).
+- **Implicancia:** el bot espera una interacción más “orientada a comandos” y mantiene el mapeo rol→caso de uso.
+
+### Rama alternativa: `asist-freeflow` (uso libre, conversacional)
+- **Objetivo:** permitir interacción **sin identificación** (sin ingresar `user_id`), **sin comandos tipo `/rol`**, y con uso **conversacional libre**.
+- **Cuándo usarla:** cuando quieres que el bot funcione como un asistente abierto (con restricciones operativas por entorno interno, por ejemplo limitando el acceso al bot dentro de una URL/ámbito institucional).
+- **Implicancia:** la orquestación prioriza el texto natural (sin requerir prefijos), manteniendo igualmente la infraestructura base (FastAPI + PostgreSQL + bot Telegram).
+
+### Cómo cambiar de rama
+Usa `git switch` (recomendado) o `git checkout`:
+
+```bash
+git fetch --all
+
+# Rama oficial
+git switch main
+# o: git checkout main
+
+# Rama freeflow
+git switch asist-freeflow
+# o: git checkout asist-freeflow
+```
 
 ---
 
@@ -28,7 +59,7 @@ Servicios principales:
 
 ```
 # desde la raíz del repo
-docker compose up --build   # levanta backend + db + adminer
+docker compose up --build   # levanta backend + db + adminer + bot (si está en compose)
 
 # luego cuando ya fue creado anteriormente el repo
 docker compose up -d       
@@ -38,11 +69,6 @@ docker compose down
 
 # para ver logs
 docker compose logs -f db
-
-# en otra terminal, dentro de backend/
-cd backend
-python telegram_bot.py      # inicia el bot de Telegram
-
 ```
 
 Flujo simplificado: 
@@ -61,7 +87,6 @@ Bot de Telegram ──► FastAPI (/api/v1/messages, /api/v1/rag/search, /api/v1
       │                                     • documents / document_chunks
       │                                     • reminders
       │                                     • teacher_alerts
-      │
       └───────────────◄────────── Respuesta de texto (sin Markdown)
 ```
 
@@ -72,20 +97,17 @@ RAG
 - Búsqueda vectorial en PostgreSQL usando pgvector.
 - Documentos: normativa MINEDUC, Ley de Autismo, DUA, PAEC, currículum, etc.
 
-LLM externo (Gemini)
-- Modelo configurable (por defecto gemini-2.0-flash).
+LLM externo (proveedor configurable)
+- Proveedor/modelo configurable vía .env (p.ej. OpenAI/Gemini/Ollama y cadena de fallback).
 - Envoltura centralizada en llm_client.py.
-- Casos de uso que lo usan: /explicar, /resumen, /quiz, /adaptar.
-- System prompts diferenciados para estudiantes y docentes, y restricción explícita: no usar Markdown (para evitar **negritas** en Telegram).
-- Si la llamada al LLM falla, se devuelve un mensaje seguro:
-> "En este momento no puedo generar una respuesta, intenta de nuevo en unos minutos."
+- Casos de uso que lo usan: /explicar, /resumen, /quiz, /adaptar (en main), o equivalentes por intención (en asist-freeflow).
+- System prompts diferenciados y restricción explícita: no usar Markdown (para evitar negritas en Telegram).
+- Si la llamada al LLM falla, se devuelve un mensaje seguro: "En este momento no puedo generar una respuesta, intenta de nuevo en unos minutos."
 y se registran llm_prompt_tokens = 0 y llm_completion_tokens = 0.
 
 Experiencia en Telegram
-- Al recibir un comando que va al backend, el bot envía primero:
-> "Estoy procesando tu solicitud, dame unos segundos..."
-- Al final de cada respuesta añade una línea con la latencia completa medida desde el bot:
-> "Tiempo de respuesta del asistente: X.Y segundos."
+- Al recibir un comando que va al backend, el bot envía primero: "Estoy procesando tu solicitud, dame unos segundos..."
+- Al final de cada respuesta añade una línea con la latencia completa medida desde el bot: "Tiempo de respuesta del asistente: X.Y segundos."
 
 ## 2. Estructura del proyecto
 
@@ -96,7 +118,7 @@ Experiencia en Telegram
 │   │   ├── main.py              # FastAPI, casos de uso, endpoints y logging
 │   │   ├── db.py                # Conexión a PostgreSQL (get_db, init_db, etc.)
 │   │   ├── rag_service.py       # Búsqueda/ingesta de documentos (RAG)
-│   │   ├── llm_client.py        # Cliente Gemini (LLM externo)
+│   │   ├── llm_client.py        # Cliente LLM (proveedor configurable)
 │   │   └── cases/
 │   │       ├── cu2_explicar.py  # explicar_con_llm (CU2)
 │   │       ├── cu3_resumen.py   # resumen_con_llm (CU3)
@@ -328,6 +350,11 @@ Cambia estado a resolved.
 
 > La decisión final siempre es del equipo humano. El asistente sólo apoya la revisión de texto y la organización de alertas.
 
+### 3.7. Uso conversacional libre (aplica a asist-freeflow)
+
+En asist-freeflow, el usuario puede escribir en lenguaje natural (sin /soy_rol ni comandos), y el backend/bot infiere la intención para enrutar a los casos de uso disponibles (por ejemplo: explicar, resumir, proponer adaptaciones, generar preguntas, orientar, etc.).
+La guía sigue existiendo como referencia, pero no se exige un formato rígido de comandos.
+
 ## 4. RAG: documentos y búsquedas
 
 Ingesta de PDFs
@@ -421,8 +448,8 @@ ORDER BY case_id;
 ### 6.1. LLM (Gemini)
 
 Configurar en el entorno del backend:
-- `GEMINI_API_KEY` (obligatoria): clave de la API de Gemini.
-- `GEMINI_MODEL_NAME` (opcional): nombre del modelo, por defecto gemini-2.0-flash.
+- `OPENAI_API_KEY`, `OPENAI_MODEL`
+- `GOOGLE_API_KEY`, `GEMINI_MODEL_NAME`
 
 ### 6.2. Telegram
 
