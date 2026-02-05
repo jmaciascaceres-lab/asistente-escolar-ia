@@ -10,3 +10,5 @@ numpy
 pypdf
 google-genai>=0.3.0
 openai>=1.0.0
+transformers==4.37.2
+peft==0.10.0
